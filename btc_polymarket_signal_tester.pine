@@ -1,0 +1,368 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// BTC Signal Edge Discovery v4 — Pine Script v5 Indicator
+// ═══════════════════════════════════════════════════════════════════════════════
+// Raw Pattern Stats (no filters — comparison only) vs Active Signal Stats
+// (pattern AND every currently-ENABLED filter). Active stats are recomputed
+// fresh from history on every script run — never accumulated in `var`
+// counters — so toggling any filter updates the table immediately.
+// ⚠ Visualisation only — no orders placed.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+//@version=5
+indicator(
+     title            = "BTC Signal Edge Discovery v4",
+     overlay          = true,
+     max_labels_count = 500,
+     max_lines_count  = 500,
+     max_bars_back    = 1500
+ )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+i_mode    = input.string("ATR Reversal", "Base Pattern", options=["ATR Reversal", "Engulfing", "Hammer/SS", "Exhaustion"], group="Pattern", tooltip="Candle pattern that generates the raw directional signal. Filters are layered on top.")
+
+i_atr_len    = input.int  (14,  "ATR Length",  minval=1,   group="ATR")
+i_atr_mult   = input.float(1.5, "ATR Mult",    minval=0.1, step=0.1, group="ATR")
+i_atr_ma_len = input.int  (50,  "ATR SMA Len", minval=5,   group="ATR")
+
+i_f1 = input.bool(true,  "F1  Trend: EMA20 > EMA50 alignment",          group="Filters (active chart signal)")
+i_f2 = input.bool(true,  "F2  Volatility: ATR above ATR SMA",           group="Filters (active chart signal)")
+i_f3 = input.bool(false, "F3  Close Location: close in top/bottom 30%", group="Filters (active chart signal)")
+i_f4 = input.bool(false, "F4  Continuation: close breaks prior candle", group="Filters (active chart signal)")
+i_f5 = input.bool(true,  "F5  Anti-chop: EMA spread > ATR x 0.15",      group="Filters (active chart signal)")
+
+i_min_sigs   = input.int (10,   "Min signals for edge detection", minval=5, maxval=100, group="Edge Detection", tooltip="Raw/Active stats need at least this many resolved signals before their win rate counts toward edge detection.")
+i_scan_bars  = input.int (1400, "Historical scan depth (bars)", minval=100, maxval=1490, group="Edge Detection", tooltip="How many closed bars back the Raw/Active stats table scans. Recomputed fresh every time any input changes — including the filter toggles.")
+i_show_ema   = input.bool(true,  "Show EMA 20 / 50 / 200",        group="Visual")
+i_show_wl    = input.bool(true,  "Show W / L markers",             group="Visual")
+i_show_break = input.bool(true,  "Show break price line",          group="Visual")
+i_lookback   = input.int (1000,  "Label lookback (bars)", minval=50, maxval=5000, group="Visual")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INDICATOR VALUES
+// ─────────────────────────────────────────────────────────────────────────────
+atr_val   = ta.atr(i_atr_len)
+atr_ma    = ta.sma(atr_val, i_atr_ma_len)
+ema20     = ta.ema(close, 20)
+ema50     = ta.ema(close, 50)
+ema200    = ta.ema(close, 200)
+body      = math.abs(close - open)
+up_wick   = high - math.max(open, close)
+dn_wick   = math.min(open, close) - low
+body_safe = math.max(body, syminfo.mintick)
+c_range   = math.max(high - low, syminfo.mintick)
+is_green  = close > open
+is_red    = open  > close
+_b1       = math.abs(close[1] - open[1])
+_b2       = math.abs(close[2] - open[2])
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RAW PATTERN DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+_atr_big    = body >= atr_val * i_atr_mult
+atr_raw_dir = _atr_big and is_red ? 1 : _atr_big and is_green ? -1 : 0
+
+_hss_h      = dn_wick >= 2.0 * body_safe and up_wick <= body_safe and is_red[1]
+_hss_s      = up_wick >= 2.0 * body_safe and dn_wick <= body_safe and is_green[1]
+hss_raw_dir = _hss_h ? 1 : _hss_s ? -1 : 0
+
+_eng_bull   = is_green and is_red[1]   and open <= close[1] and close >= open[1]
+_eng_bear   = is_red   and is_green[1] and open >= close[1] and close <= open[1]
+eng_raw_dir = _eng_bull ? 1 : _eng_bear ? -1 : 0
+
+_exh_bull   = is_red   and is_red[1]   and is_red[2]   and body < _b1 and body < _b2
+_exh_bear   = is_green and is_green[1] and is_green[2] and body < _b1 and body < _b2
+exh_raw_dir = _exh_bull ? 1 : _exh_bear ? -1 : 0
+
+pat_dir = i_mode == "Engulfing" ? eng_raw_dir : i_mode == "Hammer/SS" ? hss_raw_dir : i_mode == "Exhaustion" ? exh_raw_dir : atr_raw_dir
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FILTER CONDITIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// F1: Trend regime — EMA20 vs EMA50
+f1_bull = ema20 > ema50
+f1_bear = ema20 < ema50
+
+// F2: Volatility — ATR above its own SMA
+f2_pass = atr_val > atr_ma
+
+// F3: Close location — top 30% for UP, bottom 30% for DOWN
+f3_bull = (close - low)  / c_range >= 0.70
+f3_bear = (high - close) / c_range >= 0.70
+
+// F4: Continuation — close breaks prior candle extreme
+f4_bull = is_green and is_green[1] and close > high[1]
+f4_bear = is_red   and is_red[1]   and close < low[1]
+
+// F5: Anti-chop — EMA spread must exceed ATR * 0.15
+f5_pass = math.abs(ema20 - ema50) > atr_val * 0.15
+
+// Direction-aware filter results (when pat_dir == 0, direction filters fail)
+_d    = pat_dir
+f1_ok = _d == 1 ? f1_bull : _d == -1 ? f1_bear : false
+f3_ok = _d == 1 ? f3_bull : _d == -1 ? f3_bear : false
+f4_ok = _d == 1 ? f4_bull : _d == -1 ? f4_bear : false
+
+// Active chart signal = raw pattern AND every ENABLED filter (a filter that
+// is toggled OFF is skipped entirely, never checked). If every filter is
+// OFF, act_ok is exactly equal to the raw pattern (_d != 0).
+act_ok = (_d != 0) and (not i_f1 or f1_ok) and (not i_f2 or f2_pass) and (not i_f3 or f3_ok) and (not i_f4 or f4_ok) and (not i_f5 or f5_pass)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER FUNCTIONS  (global scope only)
+// ─────────────────────────────────────────────────────────────────────────────
+_wr_col(v, n, mn) => n < mn ? color.gray : v >= 55.0 ? color.lime : v >= 50.0 ? color.yellow : color.red
+_ok_col(b) => b ? color.lime : color.red
+_on_off(b) => b ? "ON" : "OFF"
+_pf(b)     => b ? "PASS" : "fail"
+
+// Filter pass state for the current (last) bar, for the Filter-state rows.
+_cur_f1 = _d != 0 and f1_ok
+_cur_f2 = f2_pass
+_cur_f3 = _d != 0 and f3_ok
+_cur_f4 = _d != 0 and f4_ok
+_cur_f5 = f5_pass
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERSISTENT STATE — chart markers ONLY (Entry UP/DOWN, Exit W/L badges).
+// These never feed the dashboard table below — the table is fully
+// recalculated from history on every script run (see the barstate.islast
+// block further down), so toggling a filter always updates it immediately,
+// with no dependency on `var` accumulation semantics.
+// ─────────────────────────────────────────────────────────────────────────────
+var int   pend_dir    = 0
+var float pend_close  = na
+var int   pend_bar    = na
+var int   sig_bar     = na
+var int   sig_col_dir = 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENTRY / EXIT SERIES (chart markers)
+// ─────────────────────────────────────────────────────────────────────────────
+_entry_up  = act_ok and _d == 1  and barstate.isconfirmed
+_entry_dn  = act_ok and _d == -1 and barstate.isconfirmed
+_exit_fire = pend_dir != 0 and not na(pend_bar) and bar_index == pend_bar + 1 and barstate.isconfirmed
+_exit_win  = _exit_fire and (pend_dir == 1 ? close > pend_close : close < pend_close)
+_exit_loss = _exit_fire and not _exit_win
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN LOGIC — drives the chart markers only (Entry/Exit shapes + break
+// line), not the dashboard table.
+// ─────────────────────────────────────────────────────────────────────────────
+if barstate.isconfirmed
+    if act_ok
+        sig_bar     := bar_index
+        sig_col_dir := _d
+
+        if i_show_break and bar_index >= last_bar_index - i_lookback
+            _bc = _d == 1 ? color.new(color.lime, 30) : color.new(color.red, 30)
+            line.new(bar_index, close, bar_index + 2, close,
+                 color=_bc, width=2, style=line.style_dashed)
+
+        pend_dir   := _d
+        pend_close := close
+        pend_bar   := bar_index
+    else if pend_dir != 0 and not na(pend_bar) and bar_index == pend_bar + 1
+        // Resolution bar reached — clear pending state. (The chart's W/L
+        // badges above already read the pre-clear pend_* values via
+        // _exit_fire/_exit_win, which are computed before this block runs.)
+        pend_dir   := 0
+        pend_close := na
+        pend_bar   := na
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTS
+// ─────────────────────────────────────────────────────────────────────────────
+plot(i_show_ema ? ema20  : na, "EMA 20",  color=color.new(color.yellow, 10), linewidth=1)
+plot(i_show_ema ? ema50  : na, "EMA 50",  color=color.new(color.orange, 20), linewidth=1)
+plot(i_show_ema ? ema200 : na, "EMA 200", color=color.new(color.white,  40), linewidth=2)
+
+_sig_bg = sig_col_dir == 1 ? color.new(color.green, 88) : color.new(color.red, 88)
+bgcolor(sig_bar == bar_index ? _sig_bg : na, title="Active signal bar")
+
+// Entry arrows — appear on the signal candle, scroll with chart, non-repainting
+plotshape(series=_entry_up, title="Entry UP",   style=shape.triangleup,   location=location.belowbar, color=color.new(color.lime, 0), size=size.normal)
+plotshape(series=_entry_dn, title="Entry DOWN", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,  0), size=size.normal)
+
+// Exit result badges — appear on the resolution candle (bar N+1)
+plotshape(series=_exit_win  and i_show_wl, title="Exit WIN",  style=shape.labelup,   location=location.belowbar, color=color.new(color.lime, 10), size=size.small, text="W", textcolor=color.white)
+plotshape(series=_exit_loss and i_show_wl, title="Exit LOSS", style=shape.labeldown, location=location.abovebar, color=color.new(color.red,  10), size=size.small, text="L", textcolor=color.white)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DASHBOARD — fully recalculated from history every run. No `var` counters
+// feed these numbers, so there is no stale/cached state: every time any
+// input changes (including F1-F5 toggles), Pine re-runs the whole script
+// and this block re-scans history from scratch with the CURRENT act_ok.
+//
+//   Raw Pattern Stats   = pattern only, no filters at all — comparison only.
+//   Active Signal Stats = pattern AND every currently-ENABLED filter.
+//
+// A signal at historical offset `off` is scored using close[off] (its own
+// close) vs close[off-1] (the candle it predicts). It is only ever counted
+// once bar `off-1` is itself a fully closed historical bar (off >= 2), so
+// neither stat can ever be scored against the live/still-forming current bar.
+// ─────────────────────────────────────────────────────────────────────────────
+var table tbl = table.new(position.top_right, 3, 19, bgcolor=color.new(color.black, 78), border_color=color.new(color.gray, 55), border_width=1, frame_color=color.new(color.gray, 40), frame_width=1)
+
+if barstate.islast
+    H  = color.new(color.navy,  40)
+    H2 = color.rgb(26, 10, 46, 20)
+    R  = color.new(color.black, 72)
+    W  = color.white
+    DM = color.new(color.silver, 5)
+
+    raw_total      = 0
+    raw_wins       = 0
+    act_total      = 0
+    act_wins       = 0
+    act_losses     = 0
+    act_cur_streak = 0
+    act_max_streak = 0
+    last_dir_scan  = 0
+    last_res_scan  = 0
+
+    max_offset = math.min(i_scan_bars, bar_index - 2)
+
+    if max_offset >= 2
+        for off = max_offset to 2
+            d_h    = pat_dir[off]
+            c_now  = close[off]
+            c_next = close[off - 1]   // the candle this signal predicts — always a closed historical bar (off-1 >= 1)
+
+            if d_h != 0
+                raw_total := raw_total + 1
+                raw_win = d_h == 1 ? c_next > c_now : c_next < c_now
+                if raw_win
+                    raw_wins := raw_wins + 1
+
+            if act_ok[off]
+                act_total := act_total + 1
+                a_win = d_h == 1 ? c_next > c_now : c_next < c_now
+                if a_win
+                    act_wins := act_wins + 1
+                    act_cur_streak := 0
+                else
+                    act_losses := act_losses + 1
+                    act_cur_streak := act_cur_streak + 1
+                    if act_cur_streak > act_max_streak
+                        act_max_streak := act_cur_streak
+                last_dir_scan := d_h
+                last_res_scan := a_win ? 1 : -1
+
+    raw_wr = raw_total > 0 ? raw_wins / raw_total * 100.0 : 0.0
+    act_wr = act_total > 0 ? act_wins / act_total * 100.0 : 0.0
+
+    // Pending: the most recent CONFIRMED bar's active signal, only if its
+    // resolution bar (the current, still-forming bar) hasn't closed yet —
+    // i.e. it was too recent to be included in the off >= 2 scan above.
+    pending_dir = act_ok[1] ? pat_dir[1] : 0
+
+    has_edge = (raw_total >= i_min_sigs and raw_wr >= 55.0) or (act_total >= i_min_sigs and act_wr >= 55.0)
+    edge_txt = has_edge ? "EDGE FOUND" : "No statistical edge found."
+    edge_col = has_edge ? color.lime : color.orange
+
+    enabled_parts = array.new_string(0)
+    if i_f1
+        array.push(enabled_parts, "F1")
+    if i_f2
+        array.push(enabled_parts, "F2")
+    if i_f3
+        array.push(enabled_parts, "F3")
+    if i_f4
+        array.push(enabled_parts, "F4")
+    if i_f5
+        array.push(enabled_parts, "F5")
+    enabled_str = array.size(enabled_parts) > 0 ? array.join(enabled_parts, ", ") : "None (Active = Raw)"
+
+    last_dir_txt = last_dir_scan == 1 ? "▲ UP"  : last_dir_scan == -1 ? "▼ DOWN" : "—"
+    last_res_txt = last_res_scan == 1 ? "WIN"   : last_res_scan == -1 ? "LOSS"   : "—"
+    pend_txt     = pending_dir == 1 ? "▲ UP (pending)" : pending_dir == -1 ? "▼ DOWN (pending)" : "None"
+    last_dir_col = last_dir_scan == 1 ? color.lime : last_dir_scan == -1 ? color.red : color.gray
+    last_res_col = last_res_scan == 1 ? color.lime : last_res_scan == -1 ? color.red : color.gray
+    pend_col     = pending_dir == 1 ? color.lime : pending_dir == -1 ? color.red : color.gray
+
+    // ── Header ──────────────────────────────────────────────────────────────
+    table.cell(tbl, 0, 0, "📊 Signal Stats  [" + i_mode + "]", text_color=color.aqua, bgcolor=H, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 0, "Value",  text_color=W, bgcolor=H, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 0, "Detail", text_color=W, bgcolor=H, text_halign=text.align_center, text_size=size.small)
+
+    // ── Raw Pattern Stats (no filters — comparison only) ──────────────────────
+    table.cell(tbl, 0, 1, "Raw Pattern Signals", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 1, str.tostring(raw_total), text_color=DM, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 1, "no filters", text_color=DM, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 2, "Raw Pattern Win Rate", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 2, str.tostring(raw_wr, "#.1") + "%", text_color=_wr_col(raw_wr, raw_total, i_min_sigs), bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 2, "comparison only", text_color=DM, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    // ── Active Signal Stats (current toggle state — updates immediately) ──────
+    table.cell(tbl, 0, 3, "Active Signals", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 3, str.tostring(act_total), text_color=DM, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 3, "uses toggles", text_color=color.lime, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 4, "Active Win Rate", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 4, str.tostring(act_wr, "#.1") + "%", text_color=_wr_col(act_wr, act_total, i_min_sigs), bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 4, str.tostring(act_wins) + "W / " + str.tostring(act_losses) + "L", text_color=DM, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 5, "Active Filters Enabled", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 5, enabled_str, text_color=color.lime, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 5, "", bgcolor=R)
+
+    _mx = act_max_streak >= 5 ? color.red : act_max_streak >= 3 ? color.orange : color.gray
+    table.cell(tbl, 0, 6, "Max Consecutive Losses (Active)", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 6, str.tostring(act_max_streak), text_color=_mx, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 6, "", bgcolor=R)
+
+    _sc = act_cur_streak >= 3 ? color.red : act_cur_streak >= 1 ? color.orange : color.gray
+    table.cell(tbl, 0, 7, "Current Loss Streak (Active)", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 7, str.tostring(act_cur_streak), text_color=_sc, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 7, "", bgcolor=R)
+
+    table.cell(tbl, 0, 8, "Last Signal (Active)", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 8, last_dir_txt, text_color=last_dir_col, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 8, "", bgcolor=R)
+
+    table.cell(tbl, 0, 9, "Last Result (Active)", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 9, last_res_txt, text_color=last_res_col, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 9, "", bgcolor=R)
+
+    table.cell(tbl, 0, 10, "Pending Signal (Active)", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 10, pend_txt, text_color=pend_col, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 10, "", bgcolor=R)
+
+    // ── Edge verdict ────────────────────────────────────────────────────────
+    table.cell(tbl, 0, 11, edge_txt, text_color=edge_col, bgcolor=H2, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 11, "Raw " + str.tostring(raw_wr, "#.1") + "%", text_color=_wr_col(raw_wr, raw_total, i_min_sigs), bgcolor=H2, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 11, "Act " + str.tostring(act_wr, "#.1") + "%", text_color=_wr_col(act_wr, act_total, i_min_sigs), bgcolor=H2, text_halign=text.align_center, text_size=size.small)
+
+    // ── Filter toggle + current-bar pass state ─────────────────────────────────
+    table.cell(tbl, 0, 12, "🔘 Filter",  text_color=W, bgcolor=H, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 12, "Toggle",     text_color=W, bgcolor=H, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 12, "Last Bar",   text_color=W, bgcolor=H, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 13, "F1  Trend (EMA20/50)",     text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 13, _on_off(i_f1), text_color=i_f1 ? color.lime : color.gray, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 13, _pf(_cur_f1),  text_color=_ok_col(_cur_f1),              bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 14, "F2  Volatility (ATR>SMA)", text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 14, _on_off(i_f2), text_color=i_f2 ? color.lime : color.gray, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 14, _pf(_cur_f2),  text_color=_ok_col(_cur_f2),              bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 15, "F3  Close Location",       text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 15, _on_off(i_f3), text_color=i_f3 ? color.lime : color.gray, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 15, _pf(_cur_f3),  text_color=_ok_col(_cur_f3),              bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 16, "F4  Continuation",         text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 16, _on_off(i_f4), text_color=i_f4 ? color.lime : color.gray, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 16, _pf(_cur_f4),  text_color=_ok_col(_cur_f4),              bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 17, "F5  Anti-chop",            text_color=DM, bgcolor=R, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 17, _on_off(i_f5), text_color=i_f5 ? color.lime : color.gray, bgcolor=R, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 17, _pf(_cur_f5),  text_color=_ok_col(_cur_f5),              bgcolor=R, text_halign=text.align_center, text_size=size.small)
+
+    table.cell(tbl, 0, 18, "Scan depth", text_color=DM, bgcolor=H2, text_halign=text.align_left,   text_size=size.small)
+    table.cell(tbl, 1, 18, str.tostring(max_offset) + " bars", text_color=DM, bgcolor=H2, text_halign=text.align_center, text_size=size.small)
+    table.cell(tbl, 2, 18, "", bgcolor=H2)
