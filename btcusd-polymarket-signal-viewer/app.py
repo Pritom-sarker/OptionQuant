@@ -97,23 +97,49 @@ _PREDICTION_COLORS = {
 }
 
 
-def _find_active_prediction(df, pat_dir, act_ok, filters, mode: str, enabled: dict) -> dict | None:
+def _update_live_prediction(df, pat_dir, act_ok, filters, mode: str, enabled: dict) -> dict | None:
     """
-    The most recent candle (scanning backward from now) that produced a
-    signal — whether it's still PENDING (its resolving candle hasn't closed
-    yet) or has already resolved to WIN/LOSS. This is "sticky": it keeps
-    returning the same signal until a MORE RECENT candle produces a new one,
-    which is exactly the required prediction lifecycle — never resets to
-    UNKNOWN just because the latest candle itself didn't fire.
-    Returns None only if there is no qualifying signal anywhere in the
-    fetched window at all.
+    LIVE MODE — an explicit step machine, kept separate from Historical Mode
+    (see _run_backfill_scan_once, which resolves immediately because its
+    future candles already exist in the same historical batch — that's
+    correct for history, but never appropriate here).
+
+    This function advances by exactly one step only when a genuinely NEW
+    candle has closed since the last refresh (detected by comparing the
+    newest candle's own timestamp against what was last seen, stored in
+    session_state). On a step:
+      1. If there's a stored PENDING prediction and its own resolving
+         candle now exists in the fetched data, resolve it to WIN/LOSS.
+         This can only happen once that candle has actually, fully closed.
+      2. Then check the newest candle for a (possibly new) signal.
+    If nothing has changed since the last refresh (same newest candle as
+    last time), this returns the exact same stored prediction untouched —
+    it never re-derives or re-resolves anything from a bulk recompute, so a
+    signal can never appear "pre-resolved": it is only ever evaluated one
+    real candle-close at a time, exactly like a real-time indicator.
     """
+    latest_time = int(df["time"].iloc[-1])
+    last_seen_time = st.session_state.get("live_last_seen_time")
+
+    if last_seen_time is not None and latest_time == last_seen_time:
+        return st.session_state.get("live_active_prediction")
+
     n = len(df)
-    for pos in range(n - 1, -1, -1):
-        if bool(act_ok.iloc[pos]):
-            rows = se.build_signal_table(df, pat_dir, filters, act_ok, mode, enabled, last_n=n - pos)
-            return rows[0]
-    return None
+    ap = st.session_state.get("live_active_prediction")
+
+    if ap is not None and ap.get("result") == "PENDING":
+        matches = df.index[df["time"] == ap["time"]]
+        if len(matches):
+            pos = df.index.get_loc(matches[0])
+            if pos + 1 < n:   # its resolving candle has now closed
+                ap = se.build_signal_table(df, pat_dir, filters, act_ok, mode, enabled, last_n=n - pos)[0]
+
+    if bool(act_ok.iloc[-1]) and (ap is None or ap["time"] != latest_time):
+        ap = se.build_signal_table(df, pat_dir, filters, act_ok, mode, enabled, last_n=1)[0]
+
+    st.session_state["live_active_prediction"] = ap
+    st.session_state["live_last_seen_time"] = latest_time
+    return ap
 
 
 def _render_prediction_box(row: dict | None) -> None:
@@ -148,8 +174,13 @@ def _render_prediction_box(row: dict | None) -> None:
 
 def _run_backfill_scan_once(settings: dict) -> None:
     """
-    Fetches up to BACKFILL_CANDLES_TARGET historical candles and runs the
-    exact same signal logic (signal_engine.py) across all of them. Cached in
+    HISTORICAL MODE. Fetches up to BACKFILL_CANDLES_TARGET historical candles
+    and runs the exact same signal logic (signal_engine.py) across all of
+    them, resolving every signal's WIN/LOSS immediately — which is correct
+    here because every candle's own future candle already exists in this
+    same fetched batch. (Live Mode, in _update_live_prediction, never does
+    this — it only resolves a signal once its own resolving candle has
+    genuinely closed in real time.) Cached in
     session_state so it runs exactly once per session, at startup — never
     re-run on the once-a-minute live refresh.
     """
@@ -252,11 +283,12 @@ def main() -> None:
     act_ok = se.compute_active_signal(pat_dir, filters, settings["enabled"])
     results = se.evaluate_signal_results(df, pat_dir, act_ok)
 
-    # ─── Big bold prediction box (top of page) ──────────────────────────────────
-    # Sticky: keeps showing the most recent signal (PENDING or already
-    # resolved to WIN/LOSS) until a newer candle produces a new one. Never
-    # drops to UNKNOWN just because the latest candle itself has no signal.
-    active_row = _find_active_prediction(df, pat_dir, act_ok, filters, settings["mode"], settings["enabled"])
+    # ─── Big bold prediction box (top of page) — LIVE MODE ─────────────────────
+    # Never resolves WIN/LOSS before its resolving candle has genuinely
+    # closed; advances exactly one step per real candle close. Separate from
+    # Historical Mode (_run_backfill_scan_once above), which resolves
+    # immediately since its future candles already exist in that batch.
+    active_row = _update_live_prediction(df, pat_dir, act_ok, filters, settings["mode"], settings["enabled"])
     _render_prediction_box(active_row)
 
     if len(candles) < min_needed:
