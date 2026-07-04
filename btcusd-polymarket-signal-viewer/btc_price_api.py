@@ -10,7 +10,9 @@ Binance is tried first (no auth, generous rate limits); Coinbase is a
 fallback if Binance is unreachable.
 """
 from __future__ import annotations
+import sys
 import time
+import traceback
 from typing import Optional
 
 import requests
@@ -98,14 +100,43 @@ def fetch_btcusd_candles(limit: Optional[int] = None) -> list[dict]:
         candles = _fetch_binance(limit)
         if candles:
             return candles
+        print("[btc_price_api] Binance returned an empty candle list.", file=sys.stderr)
+    except requests.exceptions.ConnectionError as e:
+        print(f"[btc_price_api] Binance connection error (network unreachable?): {e}", file=sys.stderr)
+    except requests.exceptions.Timeout:
+        print(
+            f"[btc_price_api] Binance request timed out after {config.REQUEST_TIMEOUT}s.",
+            file=sys.stderr,
+        )
+    except requests.exceptions.HTTPError as e:
+        print(
+            f"[btc_price_api] Binance HTTP error: {e.response.status_code} {e.response.reason} — {e.response.text[:200]}",
+            file=sys.stderr,
+        )
     except Exception as e:
-        print(f"[btc_price_api] Binance failed: {e}")
+        print(f"[btc_price_api] Binance failed with unexpected error: {type(e).__name__}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
 
     try:
         candles = _fetch_coinbase(limit)
         if candles:
             return candles
+        print("[btc_price_api] Coinbase returned an empty candle list.", file=sys.stderr)
+    except requests.exceptions.ConnectionError as e:
+        print(f"[btc_price_api] Coinbase connection error (network unreachable?): {e}", file=sys.stderr)
+    except requests.exceptions.Timeout:
+        print(
+            f"[btc_price_api] Coinbase request timed out after {config.REQUEST_TIMEOUT}s.",
+            file=sys.stderr,
+        )
+    except requests.exceptions.HTTPError as e:
+        print(
+            f"[btc_price_api] Coinbase HTTP error: {e.response.status_code} {e.response.reason} — {e.response.text[:200]}",
+            file=sys.stderr,
+        )
     except Exception as e:
-        print(f"[btc_price_api] Coinbase fallback failed: {e}")
+        print(f"[btc_price_api] Coinbase failed with unexpected error: {type(e).__name__}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
 
+    print("[btc_price_api] Both Binance and Coinbase failed — returning empty list.", file=sys.stderr)
     return []

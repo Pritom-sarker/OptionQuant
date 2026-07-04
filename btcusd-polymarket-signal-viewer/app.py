@@ -8,7 +8,9 @@ VISUALISATION ONLY.
     market-odds/order-book feature (see polymarket_api.py).
 """
 from __future__ import annotations
+import sys
 import time
+import traceback
 
 import pandas as pd
 import streamlit as st
@@ -187,22 +189,29 @@ def _run_backfill_scan_once(settings: dict) -> None:
     if "backfill_rows" in st.session_state:
         return
 
-    backfill_candles = btcapi.fetch_btcusd_candles(config.BACKFILL_CANDLES_TARGET)
-    if not backfill_candles:
+    try:
+        backfill_candles = btcapi.fetch_btcusd_candles(config.BACKFILL_CANDLES_TARGET)
+        if not backfill_candles:
+            st.session_state["backfill_rows"] = []
+            st.session_state["backfill_total"] = 0
+            return
+
+        bdf = se.candles_to_df(backfill_candles)
+        bdf = se.compute_indicators(bdf, settings["atr_length"], settings["atr_sma_length"])
+        bpat_dir = se.detect_pattern(bdf, settings["mode"], settings["atr_mult"])
+        bfilters = se.compute_filters(bdf, bpat_dir)
+        bact_ok = se.compute_active_signal(bpat_dir, bfilters, settings["enabled"])
+        brows = se.build_signal_table(bdf, bpat_dir, bfilters, bact_ok, settings["mode"],
+                                       settings["enabled"], last_n=len(bdf))
+
+        st.session_state["backfill_rows"] = brows
+        st.session_state["backfill_total"] = len(backfill_candles)
+    except Exception as e:
+        err_detail = traceback.format_exc()
+        print(f"[app] Backfill scan failed: {type(e).__name__}: {e}\n{err_detail}", file=sys.stderr)
         st.session_state["backfill_rows"] = []
         st.session_state["backfill_total"] = 0
-        return
-
-    bdf = se.candles_to_df(backfill_candles)
-    bdf = se.compute_indicators(bdf, settings["atr_length"], settings["atr_sma_length"])
-    bpat_dir = se.detect_pattern(bdf, settings["mode"], settings["atr_mult"])
-    bfilters = se.compute_filters(bdf, bpat_dir)
-    bact_ok = se.compute_active_signal(bpat_dir, bfilters, settings["enabled"])
-    brows = se.build_signal_table(bdf, bpat_dir, bfilters, bact_ok, settings["mode"],
-                                   settings["enabled"], last_n=len(bdf))
-
-    st.session_state["backfill_rows"] = brows
-    st.session_state["backfill_total"] = len(backfill_candles)
+        st.session_state["backfill_error"] = f"{type(e).__name__}: {e}"
 
 
 def _render_historical_scan() -> None:
@@ -210,9 +219,14 @@ def _render_historical_scan() -> None:
 
     backfill_rows = st.session_state.get("backfill_rows", [])
     total_checked = st.session_state.get("backfill_total", 0)
+    backfill_error = st.session_state.get("backfill_error")
 
     if total_checked == 0:
-        st.warning("Backfill scan could not fetch any historical candles (Binance and Coinbase both failed).")
+        if backfill_error:
+            st.error(f"Backfill scan failed with an unexpected error: {backfill_error}\n\n"
+                     "Check the service logs for the full traceback.")
+        else:
+            st.warning("Backfill scan could not fetch any historical candles (Binance and Coinbase both failed).")
         return
 
     entries = [r for r in backfill_rows if r["predicted_next"] in ("GREEN", "RED")]
@@ -269,19 +283,34 @@ def main() -> None:
     settings = st.session_state["applied_settings"]
     _run_backfill_scan_once(settings)
 
-    candles = btcapi.fetch_btcusd_candles(config.NUM_CANDLES_TARGET)
+    try:
+        candles = btcapi.fetch_btcusd_candles(config.NUM_CANDLES_TARGET)
+    except Exception as e:
+        err_detail = traceback.format_exc()
+        print(f"[app] Live candle fetch raised an unexpected exception: {type(e).__name__}: {e}\n{err_detail}",
+              file=sys.stderr)
+        candles = []
+
     min_needed = max(settings["atr_length"], settings["atr_sma_length"]) + settings["atr_length"]
     if not candles:
         _render_prediction_box(None)
         st.warning("Could not fetch real BTC/USD candle data right now. Retrying next refresh.")
         return
 
-    df = se.candles_to_df(candles)
-    df = se.compute_indicators(df, settings["atr_length"], settings["atr_sma_length"])
-    pat_dir = se.detect_pattern(df, settings["mode"], settings["atr_mult"])
-    filters = se.compute_filters(df, pat_dir)
-    act_ok = se.compute_active_signal(pat_dir, filters, settings["enabled"])
-    results = se.evaluate_signal_results(df, pat_dir, act_ok)
+    try:
+        df = se.candles_to_df(candles)
+        df = se.compute_indicators(df, settings["atr_length"], settings["atr_sma_length"])
+        pat_dir = se.detect_pattern(df, settings["mode"], settings["atr_mult"])
+        filters = se.compute_filters(df, pat_dir)
+        act_ok = se.compute_active_signal(pat_dir, filters, settings["enabled"])
+        results = se.evaluate_signal_results(df, pat_dir, act_ok)
+    except Exception as e:
+        err_detail = traceback.format_exc()
+        print(f"[app] Signal computation failed: {type(e).__name__}: {e}\n{err_detail}", file=sys.stderr)
+        _render_prediction_box(None)
+        st.error(f"Signal computation failed: {type(e).__name__}: {e}\n\n"
+                 "Check the service logs for the full traceback.")
+        return
 
     # ─── Big bold prediction box (top of page) — LIVE MODE ─────────────────────
     # Never resolves WIN/LOSS before its resolving candle has genuinely
@@ -370,4 +399,21 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        err_detail = traceback.format_exc()
+        print(f"[app] Fatal error in main(): {type(e).__name__}: {e}\n{err_detail}", file=sys.stderr)
+        # Surface the error in the UI rather than silently crashing.
+        # st.set_page_config may or may not have been called yet, so we
+        # attempt a best-effort render — Streamlit will ignore a second
+        # set_page_config call if it was already issued.
+        try:
+            st.set_page_config(page_title="BTCUSD Signal Viewer — Startup Error")
+        except Exception:
+            pass
+        st.error(
+            f"**The app encountered a fatal startup error and could not initialise.**\n\n"
+            f"`{type(e).__name__}: {e}`\n\n"
+            "Check the service logs for the full traceback."
+        )
