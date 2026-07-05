@@ -102,6 +102,9 @@ def fetch_btcusd_market() -> Optional[dict]:
             m["_tte"] = tte
             m["_yes_token_id"] = yes_id
             m["_no_token_id"] = no_id
+            m["_slug"] = slug
+            m["_window_end_ts"] = window_end_ts
+            m["_market_url"] = f"{config.POLYMARKET_EVENT_URL_BASE}/{slug}"
             best = m
     return best
 

@@ -2,10 +2,14 @@
 btcusd-polymarket-signal-viewer — Streamlit entry point.
 
 VISUALISATION ONLY.
-  - No order book. No mock trading. No real orders. No wallet.
-  - Real BTC/USD 5-minute candles (Binance/Coinbase) + the Pine Script signal
-    logic. Polymarket is not used here — it's reserved for a later
-    market-odds/order-book feature (see polymarket_api.py).
+  - No order book (Tab 1). No mock trading. No real orders. No wallet.
+  - Tab 1: real BTC/USD 5-minute candles (Binance/Coinbase) + the Pine Script
+    signal logic.
+  - Tab 2: Polymarket order book paper-trade entry simulator. Completely
+    independent from Tab 1 except for two shared fields: the prediction
+    direction (GREEN/RED) and the signal candle close price. Tab 2 is a
+    paper-trading simulator only — no wallet, no order placement, no API
+    trading, ever.
 """
 from __future__ import annotations
 import time
@@ -18,6 +22,9 @@ import config
 import btc_price_api as btcapi
 import signal_engine as se
 import chart_builder as chartb
+import polymarket_api
+import orderbook_api
+import candidate_manager
 
 
 def _sidebar() -> int:
@@ -257,14 +264,16 @@ def _render_historical_scan() -> None:
     st.dataframe(hist_display, width="stretch", hide_index=True, height=500)
 
 
-def main() -> None:
-    st.set_page_config(page_title="BTCUSD Polymarket Signal Viewer", layout="wide")
-
+def _render_tab1(refresh_seconds: int) -> None:
+    """
+    Tab 1 — BTC/USD candle prediction. Untouched: same computations, same
+    UI, same order, as before tabs were added. The only addition is exporting
+    the current prediction to session_state at the very end of the block
+    that already computes it, so Tab 2 can read it — this does not change
+    what Tab 1 itself computes or displays.
+    """
     st.title("BTCUSD Polymarket Signal Viewer")
     st.caption("⚠️ Visualisation only — no order book, no mock trading, no real orders, no wallet.")
-
-    refresh_seconds = _sidebar()
-    st_autorefresh(interval=refresh_seconds * 1000, key="refresh")
 
     settings = st.session_state["applied_settings"]
     _run_backfill_scan_once(settings)
@@ -290,6 +299,11 @@ def main() -> None:
     # immediately since its future candles already exist in that batch.
     active_row = _update_live_prediction(df, pat_dir, act_ok, filters, settings["mode"], settings["enabled"])
     _render_prediction_box(active_row)
+
+    # Shared with Tab 2 ONLY: prediction direction (GREEN/RED) + signal
+    # candle close price. Tab 2 reads this; Tab 1's own logic/UI above is
+    # unaffected by this line.
+    st.session_state["tab1_prediction"] = active_row
 
     if len(candles) < min_needed:
         st.warning(f"Only {len(candles)} candles available so far — need at least {min_needed} "
@@ -367,6 +381,204 @@ def main() -> None:
         for r in reversed(rows)   # newest first
     ]
     st.dataframe(display_rows, width="stretch", hide_index=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 2 — Polymarket Order Book Simulator
+# Always active, always refreshing, always showing YES/NO order book
+# calculations — regardless of whether Tab 1 has a GREEN/RED signal yet.
+# Tab 1's signal only changes WHAT Tab 2 focuses on (which side it tracks
+# for local-low/recovery + confirmation), never whether Tab 2 shows anything
+# at all. Tab 2 never places a real order and never creates a paper trade
+# itself — it only ever reports OBSERVE / WAIT / READY FOR PAPER ENTRY.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DECISION_ICONS = {"OBSERVE": "⚪", "WAIT": "🟡", "READY": "🟢"}
+
+
+def _side_pressure_change(observer: "candidate_manager.ObservationState", side: str) -> float | None:
+    hist = observer.yes_pressure_history if side == "YES" else observer.no_pressure_history
+    if len(hist) < 2:
+        return None
+    return hist[-1]["pressure"] - hist[-2]["pressure"]
+
+
+def _render_status_cards(observer: "candidate_manager.ObservationState", prediction_label: str) -> None:
+    yes_m = observer.last_yes_metrics
+    no_m = observer.last_no_metrics
+    final_decision = {"OBSERVE": "OBSERVE", "WAIT": "WAIT", "READY": "READY FOR PAPER ENTRY"}[observer.last_decision]
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Tab 1 Signal", prediction_label)
+    c2.metric("Selected Side", observer.selected_side or "NONE")
+    c3.metric("Current YES Price", f"{yes_m.price:.3f}" if yes_m else "—")
+    c4.metric("Current NO Price", f"{no_m.price:.3f}" if no_m else "—")
+
+    c5, c6, c7 = st.columns(3)
+    c5.metric("YES Pressure", f"{yes_m.pressure:.3f}" if yes_m else "—", delta=observer.yes_trend)
+    c6.metric("NO Pressure", f"{no_m.pressure:.3f}" if no_m else "—", delta=observer.no_trend)
+    c7.metric("Final Decision", f"{_DECISION_ICONS.get(observer.last_decision, '')} {final_decision}")
+
+
+def _render_explanation(observer: "candidate_manager.ObservationState", prediction_label: str) -> None:
+    st.subheader("Explanation")
+    if observer.selected_side is None:
+        text = observer.last_reason
+    elif observer.last_decision == "READY":
+        text = f"Tab 1 predicts {prediction_label}. {observer.last_reason}"
+    else:
+        text = (f"Tab 1 predicts {prediction_label}, so Tab 2 is watching {observer.selected_side}. "
+                f"{observer.selected_side} {observer.last_reason}.")
+    st.info(text)
+
+
+def _side_table_rows(observer: "candidate_manager.ObservationState", side: str) -> list[dict]:
+    metrics = observer.last_yes_metrics if side == "YES" else observer.last_no_metrics
+    if metrics is None:
+        return [{"Field": "Status", "Value": "Waiting for the first order book snapshot..."}]
+
+    trend = observer.yes_trend if side == "YES" else observer.no_trend
+    change = _side_pressure_change(observer, side)
+    is_selected = observer.selected_side == side
+    local_low = observer.selected_side_local_low if is_selected else None
+    recovering = observer.is_recovering() if is_selected else False
+    decision = observer.last_decision if is_selected else "—"
+    reason = observer.last_reason if is_selected else "Not the selected side."
+
+    return [
+        {"Field": "Best Bid", "Value": f"{metrics.best_bid:.4f}"},
+        {"Field": "Best Ask", "Value": f"{metrics.best_ask:.4f}"},
+        {"Field": "Mid Price", "Value": f"{metrics.mid:.4f}"},
+        {"Field": "Spread", "Value": f"{metrics.spread:.4f}"},
+        {"Field": "Top 5 Bid Depth", "Value": f"{metrics.top5_bid_depth:.2f}"},
+        {"Field": "Top 5 Ask Depth", "Value": f"{metrics.top5_ask_depth:.2f}"},
+        {"Field": "Weighted Bid Depth", "Value": f"{metrics.weighted_bid_depth:.2f}"},
+        {"Field": "Weighted Ask Depth", "Value": f"{metrics.weighted_ask_depth:.2f}"},
+        {"Field": "Pressure", "Value": f"{metrics.pressure:.3f}"},
+        {"Field": "Pressure Change", "Value": f"{change:+.3f}" if change is not None else "—"},
+        {"Field": "Pressure Trend", "Value": trend},
+        {"Field": "Liquidity ($)", "Value": f"{metrics.liquidity_usd:.2f}"},
+        {"Field": "Local Low After Signal", "Value": f"{local_low:.4f}" if local_low is not None else "—"},
+        {"Field": "Recovery Status", "Value": ("Recovering" if recovering else "Not yet recovering")
+                                               if is_selected else "—"},
+        {"Field": "Decision", "Value": decision},
+        {"Field": "Reason", "Value": reason},
+    ]
+
+
+def _render_tab2() -> None:
+    st.title("Polymarket Order Book Simulator")
+    st.caption("⚠️ Paper-trading simulation only — no wallet, no order placement, no API trading. "
+               "Always active — runs independently of Tab 1.")
+
+    # ─── Adaptive scan cadence ───────────────────────────────────────────────
+    # 3s while the last known decision was READY (a paper trade would be
+    # placed here), 30s otherwise (OBSERVE/WAIT) — read from the *previous*
+    # render's observer, since this render hasn't recomputed a decision yet.
+    prev_observer = st.session_state.get("tab2_observer")
+    prev_decision = prev_observer.last_decision if prev_observer else "OBSERVE"
+    refresh_ms = config.OB_REFRESH_MS_FAST if prev_decision == "READY" else config.OB_REFRESH_MS_SLOW
+    st_autorefresh(interval=refresh_ms, key="tab2_refresh")
+
+    market = polymarket_api.fetch_btcusd_market()
+    if market is None:
+        st.warning("No active BTCUSD 5-minute Polymarket market found right now. Retrying next refresh.")
+        return
+
+    # ─── Contract rotation — a new 5-minute BTC market slug means the prior
+    # contract's window ended and fetch_btcusd_market() has already moved on
+    # to the next one. Every chart/graph is reset to empty here so nothing
+    # from the expired contract carries over into the new one.
+    prev_slug = st.session_state.get("tab2_market_slug")
+    rolled_over = prev_slug is not None and prev_slug != market["_slug"]
+    if rolled_over:
+        st.toast(f"Contract rolled over — now scanning {market['_slug']}. Charts reset.", icon="🔁")
+    st.session_state["tab2_market_slug"] = market["_slug"]
+
+    yes_id = market["_yes_token_id"]
+    no_id = market["_no_token_id"]
+    expiry_time = time.time() + market["_tte"]
+
+    yes_book = orderbook_api.fetch_order_book(yes_id)
+    no_book = orderbook_api.fetch_order_book(no_id)
+
+    # ─── Always fetch + record both sides, regardless of Tab 1's state ───────
+    observer = st.session_state.get("tab2_observer")
+    if observer is None:
+        observer = candidate_manager.ObservationState()
+        st.session_state["tab2_observer"] = observer
+    elif rolled_over:
+        observer.reset()   # new contract — every chart/graph starts fresh, empty
+
+    prediction = st.session_state.get("tab1_prediction")
+    predicted_label = prediction.get("predicted_next", "UNKNOWN") if prediction else "UNKNOWN"
+    observer.observe(yes_book, no_book, prediction if predicted_label in ("GREEN", "RED") else None)
+
+    next_slug = f"{config.COIN}-updown-5m-{market['_window_end_ts'] + 300}"
+    next_url = f"{config.POLYMARKET_EVENT_URL_BASE}/{next_slug}"
+
+    st.subheader("Current Market")
+    st.markdown(f"**Scanning now:** [{market.get('question', market['_slug'])}]({market['_market_url']})")
+    st.markdown(f"**Next contract (in ~{int(market['_tte'])}s):** [{next_slug}]({next_url})")
+    st.caption(f"Scan interval: every {refresh_ms // 1000}s "
+               f"({'fast — READY' if refresh_ms == config.OB_REFRESH_MS_FAST else 'slow — no trade pending'}). "
+               "When this contract's 5-minute window ends, the app automatically switches to the next "
+               "BTC Up/Down contract.")
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Market", market.get("question", "—")[:28])
+    m2.metric("Expiry Time", time.strftime("%H:%M:%S", time.localtime(expiry_time)))
+    m3.metric("Current Threshold", "N/A (relative)")
+    m4.metric("YES Price", f"{observer.last_yes_metrics.price:.3f}")
+    m5.metric("NO Price", f"{observer.last_no_metrics.price:.3f}")
+    st.caption("This market resolves on relative price movement (BTC price at window close vs. "
+               "window open) — Polymarket does not publish an absolute strike/threshold value for it.")
+
+    _render_status_cards(observer, predicted_label)
+    _render_explanation(observer, predicted_label)
+
+    st.subheader("Live Order Book")
+    o1, o2 = st.columns(2)
+    with o1:
+        st.caption("YES")
+        st.dataframe(_side_table_rows(observer, "YES"), width="stretch", hide_index=True)
+    with o2:
+        st.caption("NO")
+        st.dataframe(_side_table_rows(observer, "NO"), width="stretch", hide_index=True)
+
+    st.subheader("Chart 1 — Contract Price Movement")
+    st.plotly_chart(chartb.build_tab2_price_chart(observer), width="stretch")
+
+    st.subheader("Chart 2 — Order Book Pressure")
+    st.plotly_chart(chartb.build_tab2_pressure_chart(observer), width="stretch")
+
+    ch3, ch4 = st.columns(2)
+    with ch3:
+        st.subheader("Chart 3 — Top-5 Bid/Ask Depth")
+        st.plotly_chart(chartb.build_tab2_depth_bar_chart(observer), width="stretch")
+    with ch4:
+        st.subheader("Chart 4 — Order Book Ladder")
+        st.plotly_chart(chartb.build_tab2_ladder_chart(observer), width="stretch")
+
+    st.subheader("Chart 5 — Decision Checklist")
+    st.plotly_chart(chartb.build_tab2_checklist(observer), width="stretch")
+
+    st.caption("Tab 2 never creates a real order or a paper trade by itself — it only reports "
+               "OBSERVE / WAIT / READY FOR PAPER ENTRY. A future Tab 3 will combine Tab 1's signal "
+               "with Tab 2's confirmation into an actual simulated trade.")
+
+
+def main() -> None:
+    st.set_page_config(page_title="BTCUSD Polymarket Signal Viewer", layout="wide")
+
+    refresh_seconds = _sidebar()
+    st_autorefresh(interval=refresh_seconds * 1000, key="refresh")
+
+    tab1, tab2 = st.tabs(["Tab 1: BTC/USD Prediction", "Tab 2: Polymarket Order Book Simulator"])
+    with tab1:
+        _render_tab1(refresh_seconds)
+    with tab2:
+        _render_tab2()
 
 
 if __name__ == "__main__":

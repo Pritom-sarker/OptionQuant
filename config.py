@@ -20,6 +20,7 @@ REQUEST_TIMEOUT      = 10
 # BTCUSD candles.
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
+POLYMARKET_EVENT_URL_BASE = "https://polymarket.com/event"
 # Polymarket's 5-minute BTC Up/Down markets follow a fixed slug pattern:
 #   "btc-updown-5m-{unix_ts}"  (unix_ts = window end, a multiple of 300)
 COIN              = "btc"
@@ -59,3 +60,25 @@ CHART_VISIBLE_CANDLES = 30  # chart is hard-sliced to exactly this many closed c
 
 # ─── Historical backfill scan (runs once on app startup, not every refresh) ─
 BACKFILL_CANDLES_TARGET = 1000
+
+# ─── Tab 2: Polymarket Order Book Simulator ─────────────────────────────────
+# Paper-trading simulation only — no wallet, no real order, no API trading.
+OB_REFRESH_MS_FAST     = 3_000    # scan cadence while decision is READY (trade would be placed)
+OB_REFRESH_MS_SLOW     = 30_000   # scan cadence otherwise (OBSERVE / WAIT) — fewer API calls
+CANDIDATE_EXPIRY_SEC   = 60       # a candidate has 60s to find a valid entry
+
+MAX_ENTRY_PRICE        = 0.50    # selected contract must be <= this
+MIN_PROFIT_FACTOR      = 1.0     # (1 - price) / price must be >= this
+MAX_SPREAD             = 0.08    # max acceptable bid-ask spread on selected side
+MIN_LIQUIDITY_USD      = 25.0    # min combined top-5-level depth ($) on selected side
+MIN_OB_PRESSURE        = 0.0     # pressure on selected side must be > this
+PRESSURE_TREND_EPSILON = 0.02    # |change| below this counts as "Flat", not noise
+
+OB_LEVELS  = 5
+OB_WEIGHTS = [5, 4, 3, 2, 1]   # level 1 (best) weighted highest
+
+# Tab 2's always-on dual-sided observer (independent of Tab 1's signal state)
+TAB2_HISTORY_MAX   = 1200   # bounded rolling history length (1200 x 3s = 1 hour)
+TAB2_CHART_WINDOW  = 200    # most recent samples plotted on the pressure graph
+
+DEFAULT_STAKE = 1.0   # $1 per simulated paper trade — never a real order
