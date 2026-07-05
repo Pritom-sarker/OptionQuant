@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .DS_Store
 .streamlit/secrets.toml
+tab3_trades.db
+tab3_charts/

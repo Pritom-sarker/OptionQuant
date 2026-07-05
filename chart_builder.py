@@ -430,3 +430,237 @@ def build_tab2_checklist(observer) -> go.Figure:
                        title=dict(text=f"Chart 5 — Decision Checklist   |   Final Decision: {final_label}",
                                   font=dict(color=final_color, size=15)))
     return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 3 — Trading Engine report charts. SIMULATION ONLY, purely additive —
+# nothing above this line (Tab 1/Tab 2 charts) is modified.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_figure(fig: plt.Figure, path: str) -> str:
+    """Saves a matplotlib figure to disk and closes it. Returns the path (for chaining)."""
+    fig.savefig(path, dpi=110, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def _empty_tab3_figure(title: str, figsize: tuple = (12, 4)) -> plt.Figure:
+    fig, ax = plt.subplots(figsize=figsize, dpi=100)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+    ax.text(0.5, 0.5, "Waiting for the first order book snapshot...", ha="center", va="center",
+            fontsize=12, color="#888888", transform=ax.transAxes)
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    return fig
+
+
+def build_tab3_live_price_chart(candidate_snapshots: list[dict], trade_snapshots: list[dict] = None) -> plt.Figure:
+    """
+    Live-only "selected price over time" chart for the Order Book
+    Visualization section — regenerated every tick, never saved to disk
+    (not part of the View Log's required saved-image set).
+    """
+    if not candidate_snapshots and not trade_snapshots:
+        return _empty_tab3_figure("Selected Price Over Time")
+
+    fig, ax = plt.subplots(figsize=(12, 4), dpi=100)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    if candidate_snapshots:
+        times = [pd.to_datetime(s["ts"], unit="s") for s in candidate_snapshots]
+        ax.plot(times, [s["selected_price"] for s in candidate_snapshots], color="#607d8b",
+                 linewidth=1.8, label="Price (observing)")
+    if trade_snapshots:
+        times = [pd.to_datetime(s["ts"], unit="s") for s in trade_snapshots]
+        ax.plot(times, [s["price"] for s in trade_snapshots], color="#1e88e5",
+                 linewidth=2.2, label="Price (trade open)")
+
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Contract price")
+    ax.set_title("Selected Price Over Time", fontsize=13, fontweight="bold")
+    ax.grid(True, color="#dddddd", linewidth=0.6)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    return fig
+
+
+def build_tab3_pressure_chart(candidate_snapshots: list[dict], trade_snapshots: list[dict] = None) -> plt.Figure:
+    """Saved report image — pressure (+ slope during observation) across both phases."""
+    if not candidate_snapshots and not trade_snapshots:
+        return _empty_tab3_figure("Order Book Pressure & Slope")
+
+    fig, ax = plt.subplots(figsize=(12, 4), dpi=100)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    if candidate_snapshots:
+        times = [pd.to_datetime(s["ts"], unit="s") for s in candidate_snapshots]
+        ax.plot(times, [s["pressure"] for s in candidate_snapshots], color="#2e7d32",
+                 linewidth=1.8, label="Pressure (observing)")
+        ax.plot(times, [s["pressure_slope"] for s in candidate_snapshots], color="#8a2be2",
+                 linewidth=1.4, linestyle=":", label="Pressure slope")
+    if trade_snapshots:
+        times = [pd.to_datetime(s["ts"], unit="s") for s in trade_snapshots]
+        ax.plot(times, [s["pressure"] for s in trade_snapshots], color="#1565c0",
+                 linewidth=2.2, label="Pressure (trade open)")
+
+    ax.axhline(0, color="#888888", linewidth=1.0, linestyle="--")
+    ax.set_ylim(-1, 1)
+    ax.set_ylabel("Pressure")
+    ax.set_title("Order Book Pressure & Slope", fontsize=13, fontweight="bold")
+    ax.grid(True, color="#dddddd", linewidth=0.6)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    return fig
+
+
+def build_tab3_depth_chart(candidate_snapshots: list[dict], trade_snapshots: list[dict] = None) -> plt.Figure:
+    """Saved report image — weighted bid/ask depth across both phases."""
+    if not candidate_snapshots and not trade_snapshots:
+        return _empty_tab3_figure("Bid / Ask Depth")
+
+    fig, ax = plt.subplots(figsize=(12, 4), dpi=100)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    if candidate_snapshots:
+        times = [pd.to_datetime(s["ts"], unit="s") for s in candidate_snapshots]
+        ax.plot(times, [s["weighted_bid_depth"] for s in candidate_snapshots], color="#2e7d32",
+                 linewidth=1.8, label="Bid depth (observing)")
+        ax.plot(times, [s["weighted_ask_depth"] for s in candidate_snapshots], color="#c62828",
+                 linewidth=1.8, label="Ask depth (observing)")
+    if trade_snapshots:
+        times = [pd.to_datetime(s["ts"], unit="s") for s in trade_snapshots]
+        ax.plot(times, [s["bid_depth"] for s in trade_snapshots], color="#1b5e20",
+                 linewidth=2.2, linestyle=":", label="Bid depth (trade open)")
+        ax.plot(times, [s["ask_depth"] for s in trade_snapshots], color="#8e0000",
+                 linewidth=2.2, linestyle=":", label="Ask depth (trade open)")
+
+    ax.set_ylabel("Weighted depth")
+    ax.set_title("Bid / Ask Depth", fontsize=13, fontweight="bold")
+    ax.grid(True, color="#dddddd", linewidth=0.6)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    return fig
+
+
+def build_tab3_pnl_chart(trade_snapshots: list[dict]) -> plt.Figure:
+    """Saved report image — PnL % over the life of the (open or settled) trade."""
+    if not trade_snapshots:
+        return _empty_tab3_figure("PnL — Active Trade", figsize=(12, 3.5))
+
+    fig, ax = plt.subplots(figsize=(12, 3.5), dpi=100)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    times = [pd.to_datetime(s["ts"], unit="s") for s in trade_snapshots]
+    pnl_pct = [s["pnl_pct"] * 100 for s in trade_snapshots]
+    color = "#2e7d32" if pnl_pct[-1] >= 0 else "#c62828"
+
+    ax.plot(times, pnl_pct, color=color, linewidth=2.2)
+    ax.fill_between(times, pnl_pct, 0, color=color, alpha=0.15)
+    ax.axhline(0, color="#888888", linewidth=1.0, linestyle="--")
+    ax.set_ylabel("PnL (%)")
+    ax.set_title("PnL — Active Trade", fontsize=13, fontweight="bold")
+    ax.grid(True, color="#dddddd", linewidth=0.6)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    return fig
+
+
+def build_tab3_candle_chart(df: pd.DataFrame, signal_time: int, direction: int = None,
+                             limit_price: float = None, entry_price: float = None,
+                             current_price: float = None, exit_price: float = None,
+                             result: str = None) -> plt.Figure:
+    """
+    The "Active Chart / Screenshot" — last ~30 BTC candles with the signal
+    candle highlighted, plus the simulated limit/entry/exit/current contract
+    prices as a secondary 0-1 axis (they're Polymarket contract prices, an
+    entirely different scale from the BTCUSD candles, so they get their own
+    twin y-axis rather than being drawn directly on the price axis).
+    New, standalone function — does not touch build_chart (Tab 1's own chart).
+    """
+    fig, ax = plt.subplots(figsize=(14, 6), dpi=100)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    if df is None or df.empty:
+        ax.text(0.5, 0.5, "No candle data available for this window.", ha="center", va="center",
+                fontsize=12, color="#888888", transform=ax.transAxes)
+        ax.set_xticks([]); ax.set_yticks([])
+        fig.tight_layout()
+        return fig
+
+    window_df = df.reset_index(drop=True)
+    y_min, y_max = window_df["low"].min(), window_df["high"].max()
+    padding = max((y_max - y_min) * 0.15, 0.005)
+    body_width = 0.6
+
+    for pos, row in window_df.iterrows():
+        color = GREEN if row["close"] >= row["open"] else RED
+        ax.plot([pos, pos], [row["low"], row["high"]], color=color, linewidth=1.3, zorder=2)
+        body_low = min(row["open"], row["close"])
+        height = max(abs(row["close"] - row["open"]), (y_max - y_min) * 0.004)
+        ax.add_patch(Rectangle((pos - body_width / 2, body_low), body_width, height,
+                                facecolor=color, edgecolor=color, zorder=3))
+
+    def _nearest_pos(ts: float) -> int | None:
+        if ts is None or not len(window_df):
+            return None
+        diffs = (window_df["time"] - ts).abs()
+        pos = int(diffs.idxmin())
+        # Guard against misleading markers on old reports whose candles have
+        # since scrolled out of the currently-fetched candle window.
+        if diffs.iloc[pos] > config.CANDLE_TIMEFRAME_MIN * 60 * 3:
+            return None
+        return pos
+
+    sig_pos = _nearest_pos(signal_time)
+    if sig_pos is not None:
+        ax.scatter(sig_pos, window_df["low"].iloc[sig_pos] - padding * 0.5, marker="^", color="#1e90ff",
+                   s=140, zorder=5, edgecolors="black", linewidths=0.6, label="Signal candle")
+
+    ax.set_ylim(y_min - padding, y_max + padding)
+    ax.set_xlim(-1, len(window_df))
+    step = max(1, len(window_df) // 10)
+    tick_positions = list(range(0, len(window_df), step))
+    tick_labels = [time.strftime("%H:%M", time.localtime(window_df["time"].iloc[p])) for p in tick_positions]
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels)
+    ax.set_ylabel("BTCUSD Price")
+    ax.grid(True, color="#dddddd", linewidth=0.6, zorder=0)
+
+    # Contract-price reference lines (limit/entry/exit/current) live on a
+    # secondary 0-1 axis, since they're not on the same scale as BTC price.
+    ax2 = ax.twinx()
+    ax2.set_ylim(0, 1)
+    ax2.set_ylabel("Contract price")
+    if limit_price is not None:
+        ax2.axhline(limit_price, color="#ff8c00", linewidth=1.4, linestyle="--",
+                     label=f"Limit order {limit_price:.3f}")
+    if entry_price is not None:
+        ax2.axhline(entry_price, color="#2e7d32", linewidth=1.8, label=f"Entry {entry_price:.3f}")
+    if exit_price is not None:
+        ax2.axhline(exit_price, color="#c62828", linewidth=1.8, label=f"Exit {exit_price:.3f}")
+    if current_price is not None:
+        ax2.scatter(len(window_df) - 1, current_price, marker="o", color="#1e90ff", s=90, zorder=7,
+                     edgecolors="black", linewidths=0.8, label=f"Current {current_price:.3f}")
+
+    title = "Trade Candle Chart"
+    if direction in ("GREEN", "RED"):
+        title += f" — {direction} signal"
+    if result:
+        title += f" — {result}"
+    ax.set_title(title, fontsize=13, fontweight="bold")
+
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=8, framealpha=0.9)
+    fig.tight_layout()
+    return fig

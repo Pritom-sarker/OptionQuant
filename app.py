@@ -12,6 +12,7 @@ VISUALISATION ONLY.
     trading, ever.
 """
 from __future__ import annotations
+import os
 import time
 
 import pandas as pd
@@ -24,7 +25,10 @@ import signal_engine as se
 import chart_builder as chartb
 import polymarket_api
 import orderbook_api
+import orderbook_engine as obe
 import candidate_manager
+import trade_engine
+import trade_db
 
 
 def _sidebar() -> int:
@@ -568,17 +572,505 @@ def _render_tab2() -> None:
                "with Tab 2's confirmation into an actual simulated trade.")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 3 — Trading Engine (paper trading simulator only — no wallet, no order
+# placement, no real Polymarket trading, ever). Consumes Tab 1's signal
+# (st.session_state["tab1_prediction"]) and its own independently-fetched
+# order books; Tab 1 and Tab 2 are not modified by anything below.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sidebar_tab3() -> dict:
+    """Every Tab 3 timing/threshold lives here — nothing is hard coded elsewhere."""
+    st.sidebar.header("Tab 3 — Trading Engine")
+
+    snapshot_interval = st.sidebar.number_input("Trade Snapshot Interval (sec)", min_value=1, max_value=60,
+                                                 value=config.DEFAULT_TAB3_SNAPSHOT_INTERVAL_SEC)
+    active_trade_interval = st.sidebar.number_input("Active Trade Interval (sec)", min_value=1, max_value=30,
+                                                     value=config.DEFAULT_TAB3_ACTIVE_TRADE_INTERVAL_SEC)
+    observation_burst = st.sidebar.number_input("Candidate Observation Time (sec)", min_value=5, max_value=120,
+                                                 value=config.DEFAULT_TAB3_OBSERVATION_BURST_SEC)
+    stake = st.sidebar.number_input("Stake ($)", min_value=0.1, step=0.1, value=config.DEFAULT_TAB3_STAKE)
+    max_entry_price = st.sidebar.number_input("Maximum Entry Price", min_value=0.05, max_value=0.99, step=0.01,
+                                               value=config.DEFAULT_TAB3_MAX_ENTRY_PRICE)
+    hard_block_price = st.sidebar.number_input("Hard Entry Block Price", min_value=0.05, max_value=0.99, step=0.01,
+                                                value=config.DEFAULT_TAB3_HARD_BLOCK_PRICE)
+    min_profit_factor = st.sidebar.number_input("Minimum Profit Factor", min_value=0.0, step=0.05,
+                                                 value=config.DEFAULT_TAB3_MIN_PROFIT_FACTOR)
+    early_exit_loss_pct = st.sidebar.number_input("Early Exit Loss (%)", min_value=1, max_value=90,
+                                                   value=int(config.DEFAULT_TAB3_EARLY_EXIT_LOSS_PCT * 100)) / 100.0
+    pressure_confirm_count = st.sidebar.number_input("Pressure Confirmation Count", min_value=2, max_value=20,
+                                                      value=config.DEFAULT_TAB3_PRESSURE_CONFIRM_COUNT)
+    max_spread = st.sidebar.number_input("Maximum Spread", min_value=0.01, max_value=0.5, step=0.01,
+                                         value=config.DEFAULT_TAB3_MAX_SPREAD)
+    min_liquidity = st.sidebar.number_input("Minimum Liquidity ($)", min_value=1.0, step=1.0,
+                                            value=config.DEFAULT_TAB3_MIN_LIQUIDITY_USD)
+    pressure_threshold = st.sidebar.number_input("Pressure Threshold", min_value=0.0, max_value=1.0, step=0.01,
+                                                  value=config.DEFAULT_TAB3_PRESSURE_THRESHOLD)
+    depth_stable_tolerance = st.sidebar.number_input("Ask Depth Stable Tolerance", min_value=0.01, max_value=1.0,
+                                                      step=0.01, value=config.DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE)
+
+    tentative = dict(
+        snapshot_interval=int(snapshot_interval), active_trade_interval=int(active_trade_interval),
+        observation_burst=int(observation_burst), stake=float(stake), max_entry_price=float(max_entry_price),
+        hard_block_price=float(hard_block_price), min_profit_factor=float(min_profit_factor),
+        early_exit_loss_pct=float(early_exit_loss_pct), pressure_confirm_count=int(pressure_confirm_count),
+        max_spread=float(max_spread), min_liquidity=float(min_liquidity),
+        pressure_threshold=float(pressure_threshold), depth_stable_tolerance=float(depth_stable_tolerance),
+    )
+
+    st.sidebar.header("Apply (Tab 3)")
+    if st.sidebar.button("Apply Tab 3 Settings", use_container_width=True):
+        st.session_state["tab3_settings"] = tentative
+    if "tab3_settings" not in st.session_state:
+        st.session_state["tab3_settings"] = tentative
+
+    applied = st.session_state["tab3_settings"]
+    with st.sidebar.expander("📋 Applied Tab 3 Settings", expanded=False):
+        for k, v in applied.items():
+            st.write(f"{k} = {v}")
+    if applied != tentative:
+        st.sidebar.caption("⚠ Unapplied Tab 3 changes pending — click Apply Tab 3 Settings to use them.")
+
+    return applied
+
+
+_ENTRY_STATUS_LABELS = {
+    "OPEN": "active", "EARLY_EXIT": "early exit", "SETTLED": "settled",
+}
+
+
+def _entry_status_label(candidate, trade) -> str:
+    if trade is not None:
+        return _ENTRY_STATUS_LABELS.get(trade.status, trade.status.lower())
+    if candidate is None:
+        return "—"
+    if candidate.limit_price is not None:
+        return "limit placed"
+    return "waiting"
+
+
+def _fetch_selected_book(selected_side: str, yes_book: dict, no_book: dict) -> dict:
+    return yes_book if selected_side == "YES" else no_book
+
+
+def _save_tab3_charts(candidate, trade) -> None:
+    """
+    Regenerates and overwrites the (small, fixed set of) saved chart images
+    for the current candidate/trade — one stable path per candidate/trade id
+    so "update every 2 seconds" is just re-saving to the same file; whatever
+    is on disk at settlement automatically becomes the frozen report image.
+    """
+    os.makedirs(config.TAB3_CHART_DIR, exist_ok=True)
+    cand_snaps = candidate.snapshot_history if candidate is not None else []
+    trade_snaps = trade.snapshot_history if trade is not None else []
+
+    candles = btcapi.fetch_btcusd_candles(config.NUM_CANDLES_TARGET)
+    candle_df = se.candles_to_df(candles) if candles else None
+
+    if candidate is not None:
+        candle_path = os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_candle.png")
+        fig = chartb.build_tab3_candle_chart(
+            candle_df, candidate.signal_time, direction=candidate.prediction,
+            limit_price=candidate.limit_price, entry_price=trade.entry_price if trade else None,
+            current_price=(trade_snaps[-1]["price"] if trade_snaps else
+                            (cand_snaps[-1]["selected_price"] if cand_snaps else None)),
+            exit_price=trade.exit_price if trade else None,
+            result=trade.final_result if trade else None,
+        )
+        chartb.save_figure(fig, candle_path)
+        candidate.chart_path = candle_path
+        trade_db.update_candidate_chart_path(candidate.db_id, candle_path)
+
+        pressure_path = os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_pressure.png")
+        chartb.save_figure(chartb.build_tab3_pressure_chart(cand_snaps, trade_snaps), pressure_path)
+
+        depth_path = os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_depth.png")
+        chartb.save_figure(chartb.build_tab3_depth_chart(cand_snaps, trade_snaps), depth_path)
+
+        if trade is not None:
+            trade.candle_chart_path = candle_path
+            trade.pressure_chart_path = pressure_path
+            trade.depth_chart_path = depth_path
+            trade_db.update_trade_chart_paths(trade.db_id, candle_chart_path=candle_path,
+                                               pressure_chart_path=pressure_path, depth_chart_path=depth_path)
+
+    if trade is not None and trade_snaps:
+        pnl_path = os.path.join(config.TAB3_CHART_DIR, f"trade_{trade.db_id}_pnl.png")
+        chartb.save_figure(chartb.build_tab3_pnl_chart(trade_snaps), pnl_path)
+        trade.pnl_chart_path = pnl_path
+        trade_db.update_trade_chart_paths(trade.db_id, pnl_chart_path=pnl_path)
+
+
+def _render_limit_order_position(candidate, trade) -> None:
+    st.subheader("Limit Order Position")
+    if trade is not None:
+        st.info(f"Selected side is **{trade.selected_side}** because Tab 1 predicted **{trade.prediction}**. "
+                f"Entry filled at **{trade.entry_price:.3f}** via **{trade.entry_mode}**. {trade.entry_reason}")
+        return
+    if candidate is None or candidate.limit_price is None:
+        st.caption("No limit order placed yet — waiting for the first order book snapshot.")
+        return
+
+    latest = candidate.snapshot_history[-1] if candidate.snapshot_history else None
+    current_ask_txt = f"{latest['best_ask']:.3f}" if latest else "—"
+    intro = (f"Selected side is **{candidate.selected_side}** because Tab 1 predicted "
+             f"**{candidate.prediction}**. Current {candidate.selected_side} ask is {current_ask_txt}.")
+
+    if candidate.last_mode == "IMMEDIATE":
+        text = f"{intro} Pressure is strong, so the bot chooses immediate entry."
+    else:
+        touched_txt = "has touched" if candidate.limit_touched else "has not touched"
+        text = (f"{intro} Pressure is not yet confirming immediate entry, so the bot placed a simulated "
+                 f"limit order at **{candidate.limit_price:.3f}** (the lowest price seen since the signal). "
+                 f"The order {touched_txt} {candidate.limit_price:.3f} yet.")
+    st.info(text)
+
+
+def _render_selected_side_orderbook(candidate, latest_snap: dict) -> None:
+    st.subheader("Order Book Visualization")
+    st.caption(f"Selected side only — {candidate.selected_side}.")
+    if latest_snap is None:
+        st.caption("Waiting for the first order book snapshot...")
+        return
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Weighted Bid Depth", f"{latest_snap['weighted_bid_depth']:.2f}")
+    m2.metric("Weighted Ask Depth", f"{latest_snap['weighted_ask_depth']:.2f}")
+    m3.metric("Pressure", f"{latest_snap['pressure']:.3f}", delta=f"{latest_snap['pressure_change']:+.3f}")
+    m4.metric("Spread", f"{latest_snap['spread']:.4f}")
+
+    o1, o2 = st.columns(2)
+    with o1:
+        st.caption("Top 5 Bids")
+        st.dataframe([{"Price": lv["price"], "Size": lv["size"]} for lv in latest_snap["top5_bids"]],
+                     width="stretch", hide_index=True)
+    with o2:
+        st.caption("Top 5 Asks")
+        st.dataframe([{"Price": lv["price"], "Size": lv["size"]} for lv in latest_snap["top5_asks"]],
+                     width="stretch", hide_index=True)
+
+
+def _render_active_trade_block(candidate, trade, predicted_label: str) -> None:
+    st.header("1. Active Trade Block")
+
+    if candidate is None and trade is None:
+        st.info("No active trade right now.\nWaiting for Tab 1 signal and Tab 2 order book confirmation.")
+        return
+
+    latest_cand_snap = candidate.snapshot_history[-1] if candidate and candidate.snapshot_history else None
+    latest_trade_snap = trade.snapshot_history[-1] if trade and trade.snapshot_history else None
+
+    st.subheader("Active Trade Display")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Signal Direction", predicted_label)
+    c2.metric("Selected Side", candidate.selected_side if candidate else (trade.selected_side if trade else "—"))
+    c3.metric("Signal Candle Time", time.strftime("%H:%M:%S", time.localtime(candidate.signal_time))
+              if candidate else "—")
+    c4.metric("Entry Status", _entry_status_label(candidate, trade))
+
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric("Limit Order Price", f"{candidate.limit_price:.3f}" if candidate and candidate.limit_price
+              else "—")
+    c6.metric("Best Bid", f"{latest_cand_snap['best_bid']:.3f}" if latest_cand_snap else "—")
+    c7.metric("Best Ask", f"{latest_cand_snap['best_ask']:.3f}" if latest_cand_snap else "—")
+    c8.metric("Current Price", f"{latest_trade_snap['price']:.3f}" if latest_trade_snap else
+              (f"{latest_cand_snap['selected_price']:.3f}" if latest_cand_snap else "—"))
+
+    c9, c10, c11, c12 = st.columns(4)
+    c9.metric("Entry Price", f"{trade.entry_price:.3f}" if trade else "—")
+    c10.metric("Current Exit Price (mark)", f"{latest_trade_snap['price']:.3f}" if latest_trade_snap else "—")
+    c11.metric("Stake", f"${trade.stake:.2f}" if trade else "—")
+    pf = obe.profit_factor(trade.entry_price) if trade else None
+    c12.metric("Profit Factor", f"{pf:.2f}x" if pf is not None else "—")
+
+    c13, c14, c15 = st.columns(3)
+    c13.metric("Unrealized PnL", f"{latest_trade_snap['pnl_pct'] * 100:+.1f}%" if latest_trade_snap else "—")
+    pressure_now = latest_trade_snap["pressure"] if latest_trade_snap else (
+        latest_cand_snap["pressure"] if latest_cand_snap else None)
+    c14.metric("Order Book Pressure", f"{pressure_now:.3f}" if pressure_now is not None else "—")
+    trend_now = latest_trade_snap["pressure_trend"] if latest_trade_snap else "—"
+    c15.metric("Pressure Trend", trend_now)
+
+    reason_now = trade.entry_reason if trade else (candidate.last_reason if candidate else "—")
+    st.caption(f"Reason: {reason_now}")
+
+    _render_limit_order_position(candidate, trade)
+
+    st.subheader("Active Chart")
+    chart_path = (trade.candle_chart_path if trade and trade.candle_chart_path else
+                  (candidate.chart_path if candidate else None))
+    if chart_path and os.path.exists(chart_path):
+        st.image(chart_path, use_container_width=True)
+    else:
+        st.caption("Chart not generated yet.")
+
+    _render_selected_side_orderbook(candidate or trade, latest_cand_snap)
+
+    cand_snaps = candidate.snapshot_history if candidate else []
+    trade_snaps = trade.snapshot_history if trade else []
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        pressure_path = (trade.pressure_chart_path if trade and trade.pressure_chart_path else
+                          (os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_pressure.png")
+                           if candidate else None))
+        if pressure_path and os.path.exists(pressure_path):
+            st.image(pressure_path, use_container_width=True, caption="Pressure over time")
+    with sc2:
+        depth_path = (trade.depth_chart_path if trade and trade.depth_chart_path else
+                       (os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_depth.png")
+                        if candidate else None))
+        if depth_path and os.path.exists(depth_path):
+            st.image(depth_path, use_container_width=True, caption="Bid depth vs ask depth")
+    st.pyplot(chartb.build_tab3_live_price_chart(cand_snaps, trade_snaps), clear_figure=True)
+
+
+def _closed_trades_summary(trades: list[dict]) -> dict:
+    wins = [t for t in trades if t["final_result"] == "WIN"]
+    losses = [t for t in trades if t["final_result"] == "LOSS"]
+    early_exits = [t for t in trades if t["status"] == "EARLY_EXIT"]
+    profits = [t["pnl"] for t in trades if t["pnl"] is not None]
+    entry_prices = [t["entry_price"] for t in trades if t["entry_price"] is not None]
+    pfs = [obe.profit_factor(p) for p in entry_prices]
+    return {
+        "total": len(trades), "wins": len(wins), "losses": len(losses), "early_exits": len(early_exits),
+        "win_rate": (len(wins) / len(trades) * 100) if trades else 0.0,
+        "total_profit": sum(profits) if profits else 0.0,
+        "avg_profit": (sum(profits) / len(profits)) if profits else 0.0,
+        "best": max(profits) if profits else None, "worst": min(profits) if profits else None,
+        "avg_entry": (sum(entry_prices) / len(entry_prices)) if entry_prices else None,
+        "avg_pf": (sum(pfs) / len(pfs)) if pfs else None,
+    }
+
+
+def _render_trade_report(row: dict) -> None:
+    report = trade_engine.build_report(row)
+    candidate_row = report["candidate"]
+    cand_snaps = report["candidate_snapshots"]
+    trade_snaps = report["trade_snapshots"]
+
+    st.markdown("**Signal Section**")
+    if candidate_row:
+        st.dataframe([{
+            "Signal Time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(candidate_row["signal_time"])),
+            "Direction": candidate_row["prediction"], "Selected Side": candidate_row["selected_side"],
+            "Open": candidate_row["signal_open"], "High": candidate_row["signal_high"],
+            "Low": candidate_row["signal_low"], "Close": candidate_row["signal_close"],
+            "ATR": candidate_row["atr"], "Body": candidate_row["body"],
+            "Body/ATR": candidate_row["body_atr_ratio"], "Reason": candidate_row["reason"],
+        }], width="stretch", hide_index=True)
+        st.dataframe([{
+            "F1 Trend": candidate_row.get("f1_trend"), "F2 Volatility": candidate_row.get("f2_volatility"),
+            "F3 Close Loc": candidate_row.get("f3_close_location"),
+            "F4 Continuation": candidate_row.get("f4_continuation"),
+            "F5 Anti-Chop": candidate_row.get("f5_anti_chop"),
+        }], width="stretch", hide_index=True)
+
+    st.markdown("**Entry Section**")
+    st.write(f"Selected side: **{candidate_row['selected_side'] if candidate_row else '—'}**")
+    st.write(f"Limit order price: **{cand_snaps[-1]['limit_price']:.3f}**" if cand_snaps and
+             cand_snaps[-1]["limit_price"] is not None else "Limit order price: —")
+    st.write(f"Entry price: **{row['entry_price']:.3f}** ({row['entry_mode']})")
+    st.write(f"Why: {row['entry_reason']}")
+    st.write(f"Order book snapshots before entry: **{len(cand_snaps)}**")
+
+    st.markdown("**Order Book Section (at entry)**")
+    if cand_snaps:
+        entry_snap = cand_snaps[-1]
+        st.dataframe([{
+            "Pressure at Entry": round(entry_snap["pressure"], 3),
+            "Spread": round(entry_snap["spread"], 4),
+            "Weighted Bid Depth": round(entry_snap["weighted_bid_depth"], 2),
+            "Weighted Ask Depth": round(entry_snap["weighted_ask_depth"], 2),
+            "Decision": entry_snap["decision"], "Mode": entry_snap["mode"],
+        }], width="stretch", hide_index=True)
+
+    st.markdown("**Active Trade Section**")
+    if trade_snaps:
+        danger_rows = []
+        for s in trade_snaps:
+            danger = "DANGER" if (s["pnl_pct"] <= -0.20 and s["pressure"] < 0) else "SAFE"
+            danger_rows.append({
+                "Time": time.strftime("%H:%M:%S", time.localtime(s["ts"])),
+                "Price": round(s["price"], 3), "PnL %": f"{s['pnl_pct'] * 100:+.1f}%",
+                "Pressure": round(s["pressure"], 3), "Danger Status": danger,
+            })
+        st.dataframe(danger_rows, width="stretch", hide_index=True, height=250)
+    else:
+        st.caption("No active-trade monitoring snapshots (trade may not have been entered).")
+
+    st.markdown("**Exit Section**")
+    if row["exit_reason"]:
+        exit_type = "Early Exit" if row["status"] == "EARLY_EXIT" else "Expiry"
+        st.write(f"Exit type: **{exit_type}**")
+        st.write(f"Exit price: **{row['exit_price']:.3f}**")
+        st.write(f"Profit: **{row['pnl']:.4f}** | Return: **{row['return_pct'] * 100:+.1f}%**")
+        st.write(f"Reason: {row['exit_reason']}")
+    else:
+        st.write("Still open.")
+
+    st.markdown("**Charts**")
+    for path, caption in ((row.get("candle_chart_path"), "Candle / Limit Order Chart"),
+                           (row.get("pressure_chart_path"), "Pressure Chart"),
+                           (row.get("depth_chart_path"), "Order Book Depth Chart"),
+                           (row.get("pnl_chart_path"), "PnL Chart")):
+        if path and os.path.exists(path):
+            st.image(path, caption=caption, use_container_width=True)
+        else:
+            st.caption(f"{caption}: not available.")
+
+    st.markdown("**Full Report**")
+    st.write(row.get("report_text") or "—")
+
+    st.markdown("**Final Summary**")
+    duration = (row["exit_time"] - row["entry_time"]) if row["exit_time"] and row["entry_time"] else None
+    st.dataframe([{
+        "Entry": round(row["entry_price"], 3), "Exit": round(row["exit_price"], 3) if row["exit_price"] else "—",
+        "Profit": round(row["pnl"], 4) if row["pnl"] is not None else "—",
+        "Return": f"{row['return_pct'] * 100:+.1f}%" if row["return_pct"] is not None else "—",
+        "Win/Loss": row["final_result"] or "—",
+        "Duration (s)": round(duration, 1) if duration is not None else "—",
+        "Reason": row["exit_reason"] or "—", "Confidence (Mode)": row["entry_mode"],
+        "Snapshot Count": len(cand_snaps) + len(trade_snaps),
+    }], width="stretch", hide_index=True)
+
+
+def _render_closed_trades_block() -> None:
+    st.header("2. Closed Trades Block")
+    all_trades = trade_db.fetch_all_trades()
+    if not all_trades:
+        st.caption("No completed trades yet.")
+        return
+
+    stats = _closed_trades_summary(all_trades)
+    s1, s2, s3, s4, s5 = st.columns(5)
+    s1.metric("Total Trades", stats["total"])
+    s2.metric("Wins", stats["wins"])
+    s3.metric("Losses", stats["losses"])
+    s4.metric("Early Exits", stats["early_exits"])
+    s5.metric("Win Rate", f"{stats['win_rate']:.1f}%")
+
+    s6, s7, s8, s9, s10 = st.columns(5)
+    s6.metric("Total Profit", f"{stats['total_profit']:.4f}")
+    s7.metric("Average Profit", f"{stats['avg_profit']:.4f}")
+    s8.metric("Best Trade", f"{stats['best']:.4f}" if stats["best"] is not None else "—")
+    s9.metric("Worst Trade", f"{stats['worst']:.4f}" if stats["worst"] is not None else "—")
+    s10.metric("Avg Entry / Avg PF", f"{stats['avg_entry']:.3f} / {stats['avg_pf']:.2f}x"
+               if stats["avg_entry"] is not None else "—")
+
+    st.dataframe([{
+        "Trade ID": t["id"],
+        "Signal Time": time.strftime("%H:%M:%S", time.localtime(t["entry_time"])) if t["entry_time"] else "—",
+        "Selected Side": "YES" if t["direction"] == 1 else "NO",
+        "Entry Type": t["entry_mode"], "Limit Price": "—",
+        "Entry Price": round(t["entry_price"], 3) if t["entry_price"] is not None else "—",
+        "Exit Price": round(t["exit_price"], 3) if t["exit_price"] is not None else "—",
+        "Profit": round(t["pnl"], 4) if t["pnl"] is not None else "—",
+        "Result": t["final_result"] or "—", "Status": t["status"],
+    } for t in all_trades], width="stretch", hide_index=True)
+
+    st.caption("Click a trade below to View Log — the full detailed report.")
+    for row in all_trades:
+        icon = "🟢" if row["final_result"] == "WIN" else ("🔴" if row["final_result"] == "LOSS" else "⏳")
+        result_txt = f" ({row['final_result']}, {row['return_pct'] * 100:+.1f}%)" \
+            if row["return_pct"] is not None else ""
+        with st.expander(f"{icon} View Log — Trade #{row['id']} — {row['prediction']} — "
+                          f"{row['status']}{result_txt}"):
+            _render_trade_report(row)
+
+
+def _render_tab3() -> None:
+    st.title("Tab 3 — Trading Engine")
+    st.caption("⚠️ Paper-trading simulation only — no wallet, no order placement, no real Polymarket "
+               "trading, ever. Decides entry timing/price from Tab 1's signal and the live order book, "
+               "then simulates the trade end to end.")
+
+    settings = st.session_state.get("tab3_settings")
+    if settings is None:
+        st.info("Set Tab 3 settings in the sidebar first.")
+        return
+
+    candidate = st.session_state.get("tab3_candidate")
+    trade = st.session_state.get("tab3_trade")
+
+    refresh_ms = (settings["active_trade_interval"] if trade is not None and trade.status == "OPEN"
+                  else settings["snapshot_interval"]) * 1000
+    st_autorefresh(interval=refresh_ms, key="tab3_refresh")
+
+    market = polymarket_api.fetch_btcusd_market()
+    if market is None:
+        st.warning("No active BTCUSD 5-minute Polymarket market found right now. Retrying next refresh.")
+        return
+
+    yes_book = orderbook_api.fetch_order_book(market["_yes_token_id"])
+    no_book = orderbook_api.fetch_order_book(market["_no_token_id"])
+
+    tab1_prediction = st.session_state.get("tab1_prediction")
+    predicted_label = tab1_prediction.get("predicted_next", "UNKNOWN") if tab1_prediction else "UNKNOWN"
+
+    # ── Candidate creation — a new distinct Tab 1 signal supersedes any prior,
+    # still-observing candidate. An active trade is never cancelled by a
+    # signal flip — it runs to its own settlement. GREEN -> YES only, RED ->
+    # NO only; record_candidate_snapshot/record_trade_snapshot below only
+    # ever touch candidate.selected_side's book, never both. ────────────────
+    if predicted_label in ("GREEN", "RED") and tab1_prediction is not None and trade is None:
+        signal_time = int(tab1_prediction["time"])
+        if candidate is None or candidate.signal_time != signal_time or candidate.prediction != predicted_label:
+            if candidate is not None and candidate.status == "OBSERVING":
+                trade_engine.supersede_candidate(candidate)
+            candidate = trade_engine.create_candidate(tab1_prediction, market)
+            st.session_state["tab3_candidate"] = candidate
+
+    # ── Observing: snapshot + decide entry ──────────────────────────────────
+    if trade is None and candidate is not None and candidate.status == "OBSERVING":
+        if candidate.is_expired():
+            trade_engine.expire_candidate(candidate)
+        else:
+            snap = trade_engine.record_candidate_snapshot(candidate, yes_book, no_book, settings)
+            if snap["decision"] == "BUY":
+                trade = trade_engine.enter_trade(candidate, snap, settings)
+                st.session_state["tab3_trade"] = trade
+                st.toast(f"Entry filled at {trade.entry_price:.3f} ({trade.entry_mode}).", icon="🎯")
+
+    # ── Active trade: monitor, early exit, settle at expiry ─────────────────
+    if trade is not None and trade.status == "OPEN":
+        trade_engine.record_trade_snapshot(trade, yes_book, no_book)
+        should_exit, exit_reason = trade_engine.check_early_exit(trade, settings)
+        if should_exit:
+            trade_engine.settle_early_exit(trade, exit_reason)
+        else:
+            trade_engine.settle_at_expiry(trade, yes_book, no_book)   # None/no-op until expiry
+
+    if candidate is not None or trade is not None:
+        _save_tab3_charts(candidate, trade)
+
+    if trade is not None and trade.status != "OPEN":
+        st.toast(f"Trade settled — {trade.final_result} ({trade.return_pct * 100:+.1f}%).",
+                 icon="✅" if trade.final_result == "WIN" else "🛑")
+        st.session_state["tab3_trade"] = None
+        st.session_state["tab3_candidate"] = None
+        trade = None
+        candidate = None
+
+    _render_active_trade_block(candidate, trade, predicted_label)
+    st.divider()
+    _render_closed_trades_block()
+
+
 def main() -> None:
     st.set_page_config(page_title="BTCUSD Polymarket Signal Viewer", layout="wide")
 
     refresh_seconds = _sidebar()
     st_autorefresh(interval=refresh_seconds * 1000, key="refresh")
+    _sidebar_tab3()
 
-    tab1, tab2 = st.tabs(["Tab 1: BTC/USD Prediction", "Tab 2: Polymarket Order Book Simulator"])
+    tab1, tab2, tab3 = st.tabs(["Tab 1: BTC/USD Prediction", "Tab 2: Polymarket Order Book Simulator",
+                                 "Tab 3: Trading Engine"])
     with tab1:
         _render_tab1(refresh_seconds)
     with tab2:
         _render_tab2()
+    with tab3:
+        _render_tab3()
 
 
 if __name__ == "__main__":

@@ -82,3 +82,27 @@ TAB2_HISTORY_MAX   = 1200   # bounded rolling history length (1200 x 3s = 1 hour
 TAB2_CHART_WINDOW  = 200    # most recent samples plotted on the pressure graph
 
 DEFAULT_STAKE = 1.0   # $1 per simulated paper trade — never a real order
+
+# ─── Tab 3: Trading Engine (paper trading only — no wallet, no real order) ──
+# Defaults only — the Tab 3 sidebar ("Apply Settings") is the single source
+# of truth at runtime; nothing here is read directly by trade_engine.py once
+# the sidebar has applied its own settings dict.
+TAB3_DB_PATH = "tab3_trades.db"
+TAB3_CHART_DIR = "tab3_charts"
+
+DEFAULT_TAB3_SNAPSHOT_INTERVAL_SEC     = 2      # Trade Snapshot Interval
+DEFAULT_TAB3_ACTIVE_TRADE_INTERVAL_SEC = 1      # Active Trade Interval
+DEFAULT_TAB3_OBSERVATION_BURST_SEC     = 20     # Candidate Observation Time (initial burst, ~10 snapshots)
+
+DEFAULT_TAB3_STAKE                  = 1.0
+DEFAULT_TAB3_MAX_ENTRY_PRICE        = 0.52    # soft cap used by the entry-mode logic
+DEFAULT_TAB3_HARD_BLOCK_PRICE       = 0.55    # hard rule — never enter above this, no exceptions
+DEFAULT_TAB3_MIN_PROFIT_FACTOR      = 0.90
+DEFAULT_TAB3_EARLY_EXIT_LOSS_PCT    = 0.20
+DEFAULT_TAB3_PRESSURE_CONFIRM_COUNT = 3       # consecutive snapshots required for slope/streak checks
+DEFAULT_TAB3_MAX_SPREAD             = 0.08
+DEFAULT_TAB3_MIN_LIQUIDITY_USD      = 25.0
+DEFAULT_TAB3_PRESSURE_THRESHOLD     = 0.15    # Mode 1 "pressure >= threshold"
+DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE = 0.10    # Mode 1 "ask depth stable" — max fractional change allowed
+
+TAB3_SNAPSHOT_HISTORY_MAX = 2000   # bounded in-memory rolling history per candidate/trade
