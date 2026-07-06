@@ -118,4 +118,11 @@ DEFAULT_TAB3_MIN_LIQUIDITY_USD      = 25.0
 DEFAULT_TAB3_PRESSURE_THRESHOLD     = 0.15    # Mode 1 "pressure >= threshold"
 DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE = 0.10    # Mode 1 "ask depth stable" — max fractional change allowed
 
+# When ON: skip every order-book condition (pressure/profit-factor/spread/
+# liquidity) and enter immediately at whatever price is available the moment
+# a candidate is created; skip early exit entirely (only settle_at_expiry
+# ever closes the trade). Simpler alternative to the order-book-based entry
+# modes above — everything else (stake, settlement, PnL, charts) is unchanged.
+DEFAULT_TAB3_IMMEDIATE_MODE = False
+
 TAB3_SNAPSHOT_HISTORY_MAX = 2000   # bounded in-memory rolling history per candidate/trade

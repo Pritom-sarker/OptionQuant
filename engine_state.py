@@ -65,6 +65,7 @@ class AppState:
             "min_liquidity": config.DEFAULT_TAB3_MIN_LIQUIDITY_USD,
             "pressure_threshold": config.DEFAULT_TAB3_PRESSURE_THRESHOLD,
             "depth_stable_tolerance": config.DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE,
+            "immediate_mode": config.DEFAULT_TAB3_IMMEDIATE_MODE,
         }
         self.tab3_candidate = None
         self.tab3_trade = None

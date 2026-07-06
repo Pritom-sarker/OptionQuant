@@ -189,6 +189,12 @@ def _decide_entry(candidate: TradeCandidate, calc: dict, settings: dict) -> tupl
     """
     price = calc["price"]
 
+    if settings.get("immediate_mode"):
+        reason = (f"Immediate Entry & Exit mode is ON — entering immediately at the current market price "
+                   f"{price:.3f} with no order-book conditions (pressure, profit factor, spread, liquidity) "
+                   f"and no waiting. Will hold until the market expires — no early exit.")
+        return "IMMEDIATE", "BUY", reason
+
     if price > settings["hard_block_price"]:
         return None, "SKIP", (f"Price {price:.3f} is above the hard block price "
                                f"{settings['hard_block_price']:.2f} — never entered, no exceptions.")
@@ -363,6 +369,9 @@ def check_early_exit(trade: ActiveTrade, settings: dict) -> tuple[bool, str]:
     pressure, negative slope, bid depth falling, ask depth rising, spread
     widening.
     """
+    if settings.get("immediate_mode"):
+        return False, ""   # Immediate Entry & Exit mode: hold until settle_at_expiry, never exit early.
+
     n = settings["pressure_confirm_count"]
     if len(trade.snapshot_history) < n:
         return False, ""

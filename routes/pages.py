@@ -104,7 +104,7 @@ def settings_tab3(
     min_profit_factor: float = Form(...), early_exit_loss_pct: int = Form(...),
     pressure_confirm_count: int = Form(...), max_spread: float = Form(...),
     min_liquidity: float = Form(...), pressure_threshold: float = Form(...),
-    depth_stable_tolerance: float = Form(...),
+    depth_stable_tolerance: float = Form(...), immediate_mode: bool = Form(False),
 ):
     with state.lock:
         state.tab3_settings = {
@@ -114,6 +114,6 @@ def settings_tab3(
             "min_profit_factor": min_profit_factor, "early_exit_loss_pct": early_exit_loss_pct / 100.0,
             "pressure_confirm_count": pressure_confirm_count, "max_spread": max_spread,
             "min_liquidity": min_liquidity, "pressure_threshold": pressure_threshold,
-            "depth_stable_tolerance": depth_stable_tolerance,
+            "depth_stable_tolerance": depth_stable_tolerance, "immediate_mode": immediate_mode,
         }
     return RedirectResponse(url="/settings?saved=1", status_code=303)
