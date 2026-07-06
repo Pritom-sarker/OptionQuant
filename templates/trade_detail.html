@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% import "partials/_macros.html" as m %}
+{% block title %}Trade #{{ row.id if found else '?' }} — Details{% endblock %}
+{% block content %}
+{% if not found %}
+<h1 class="page-title">Trade not found</h1>
+<p class="caption">No trade with that ID exists. <a href="/tab5">&larr; Back to Trade Stats</a></p>
+{% else %}
+<h1 class="page-title">{{ icon }} Trade #{{ row.id }} — {{ row.prediction }} — {{ row.status }}
+  {% if return_pct is not none %}({{ row.final_result }}, {{ "%+.1f%%"|format(return_pct * 100) }}){% endif %}
+</h1>
+<p class="caption"><a href="/tab5">&larr; Back to Trade Stats &amp; Documentation</a></p>
+
+{% set r = report %}
+<h2 class="section">Signal Section</h2>
+{% if r.candidate %}
+<div class="table-scroll"><table class="data-table"><tbody>
+  <tr><th>Signal Time</th><td>{{ r.signal_time_str }}</td></tr>
+  <tr><th>Direction</th><td>{{ r.candidate.prediction }}</td></tr>
+  <tr><th>Selected Side</th><td>{{ r.candidate.selected_side }}</td></tr>
+  <tr><th>Open/High/Low/Close</th><td>{{ r.candidate.signal_open }} / {{ r.candidate.signal_high }} / {{ r.candidate.signal_low }} / {{ r.candidate.signal_close }}</td></tr>
+  <tr><th>ATR / Body / Body-ATR</th><td>{{ r.candidate.atr }} / {{ r.candidate.body }} / {{ r.candidate.body_atr_ratio }}</td></tr>
+  <tr><th>Reason</th><td>{{ r.candidate.reason }}</td></tr>
+  <tr><th>Filters</th><td>F1={{ r.candidate.f1_trend }} F2={{ r.candidate.f2_volatility }} F3={{ r.candidate.f3_close_location }} F4={{ r.candidate.f4_continuation }} F5={{ r.candidate.f5_anti_chop }}</td></tr>
+</tbody></table></div>
+{% endif %}
+
+<h2 class="section">Entry Section</h2>
+<p>Selected side: <strong>{{ r.candidate.selected_side if r.candidate else "—" }}</strong></p>
+<p>Limit order price: <strong>{{ r.limit_price_at_entry }}</strong></p>
+<p>Entry price: <strong>{{ entry_price }}</strong> ({{ row.entry_mode }})</p>
+<p>Why: {{ row.entry_reason }}</p>
+<p>Order book snapshots before entry: <strong>{{ r.snapshots_before_entry }}</strong></p>
+
+<h2 class="section">Order Book Section (at entry)</h2>
+{% if r.entry_snap %}
+<div class="table-scroll"><table class="data-table"><tbody>
+  <tr><th>Pressure at Entry</th><td>{{ "%.3f"|format(r.entry_snap.pressure) }}</td></tr>
+  <tr><th>Spread</th><td>{{ "%.4f"|format(r.entry_snap.spread) }}</td></tr>
+  <tr><th>Weighted Bid/Ask Depth</th><td>{{ "%.2f"|format(r.entry_snap.weighted_bid_depth) }} / {{ "%.2f"|format(r.entry_snap.weighted_ask_depth) }}</td></tr>
+  <tr><th>Decision / Mode</th><td>{{ r.entry_snap.decision }} / {{ r.entry_snap.mode }}</td></tr>
+</tbody></table></div>
+{% endif %}
+
+<h2 class="section">Active Trade Section</h2>
+{% if r.danger_rows %}
+{{ m.data_table(["Time","Price","PnL %","Pressure","Danger Status"], r.danger_rows) }}
+{% else %}
+<p class="caption">No active-trade monitoring snapshots (trade may not have been entered).</p>
+{% endif %}
+
+<h2 class="section">Exit Section</h2>
+{% if row.exit_reason %}
+<p>Exit type: <strong>{{ r.exit_type }}</strong></p>
+<p>Exit price: <strong>{{ exit_price }}</strong></p>
+<p>Profit: <strong>{{ pnl }}</strong> | Return: <strong>{{ "%+.1f%%"|format(return_pct * 100) if return_pct is not none else "—" }}</strong></p>
+<p>Reason: {{ row.exit_reason }}</p>
+{% else %}
+<p>Still open.</p>
+{% endif %}
+
+<h2 class="section">Charts</h2>
+<div class="chart-grid">
+  {% for path, caption in [(row.candle_chart_path, "Candle / Limit Order Chart"), (row.pressure_chart_path, "Pressure Chart"), (row.depth_chart_path, "Order Book Depth Chart"), (row.pnl_chart_path, "PnL Chart")] %}
+  {% if path %}
+  <div class="chart-card"><img src="/charts/tab3/file?path={{ path }}" alt="{{ caption }}"><p class="caption">{{ caption }}</p></div>
+  {% else %}
+  <p class="caption">{{ caption }}: not available.</p>
+  {% endif %}
+  {% endfor %}
+</div>
+
+<h2 class="section">Full Report</h2>
+<p>{{ row.report_text or "—" }}</p>
+
+<h2 class="section">Final Summary</h2>
+<div class="table-scroll"><table class="data-table"><tbody>
+  <tr><th>Entry</th><td>{{ entry_price }}</td></tr>
+  <tr><th>Exit</th><td>{{ exit_price }}</td></tr>
+  <tr><th>Profit</th><td>{{ pnl }}</td></tr>
+  <tr><th>Return</th><td>{{ "%+.1f%%"|format(return_pct * 100) if return_pct is not none else "—" }}</td></tr>
+  <tr><th>Win/Loss</th><td>{{ row.final_result }}</td></tr>
+  <tr><th>Duration (s)</th><td>{{ r.duration }}</td></tr>
+  <tr><th>Reason</th><td>{{ row.exit_reason or "—" }}</td></tr>
+  <tr><th>Confidence (Mode)</th><td>{{ row.entry_mode }}</td></tr>
+  <tr><th>Snapshot Count</th><td>{{ r.snapshot_count }}</td></tr>
+</tbody></table></div>
+{% endif %}
+{% endblock %}

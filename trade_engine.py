@@ -52,6 +52,13 @@ class TradeCandidate:
     selected_side: str           # "YES" | "NO"
     market_slug: str
     expiry_time: float
+    # Snapshotted at creation and reused for this candidate's whole lifetime
+    # — even if the *current* active market rolls over to a new 5-minute
+    # window mid-candidate, order book polling keeps targeting the window
+    # this candidate was actually created against (never a later market's
+    # tokens; that would corrupt monitoring and make settlement impossible).
+    yes_token_id: str = ""
+    no_token_id: str = ""
     created_at: float = field(default_factory=time.time)
     status: str = "OBSERVING"    # OBSERVING | ENTERED | SKIPPED | EXPIRED
 
@@ -100,6 +107,8 @@ class ActiveTrade:
     entry_mode: str
     entry_reason: str
     expiry_time: float
+    yes_token_id: str = ""       # inherited from the candidate — same market for its whole lifetime
+    no_token_id: str = ""
     status: str = "OPEN"         # OPEN | EARLY_EXIT | SETTLED
 
     snapshot_history: list = field(default_factory=list)
@@ -152,6 +161,7 @@ def create_candidate(tab1_row: dict, market: dict) -> TradeCandidate:
         signal_close=row["signal_close"], atr=row["atr"], body=row["body"],
         body_atr_ratio=row["body_atr_ratio"], reason=row["reason"],
         selected_side=selected_side, market_slug=row["market_slug"],
+        yes_token_id=market["_yes_token_id"], no_token_id=market["_no_token_id"],
         expiry_time=expiry_time, f1_trend=row["f1_trend"], f2_volatility=row["f2_volatility"],
         f3_close_location=row["f3_close_location"], f4_continuation=row["f4_continuation"],
         f5_anti_chop=row["f5_anti_chop"],
@@ -308,6 +318,7 @@ def enter_trade(candidate: TradeCandidate, snap: dict, settings: dict) -> Active
         direction=row["direction"], prediction=row["prediction"], selected_side=candidate.selected_side,
         entry_time=row["entry_time"], entry_price=row["entry_price"], stake=row["stake"],
         entry_mode=row["entry_mode"], entry_reason=row["entry_reason"], expiry_time=row["expiry_time"],
+        yes_token_id=candidate.yes_token_id, no_token_id=candidate.no_token_id,
     )
 
 
@@ -383,34 +394,48 @@ def settle_early_exit(trade: ActiveTrade, reason: str) -> dict:
                       exit_reason=reason, pnl=latest["pnl"], return_pct=latest["pnl_pct"])
 
 
-def settle_at_expiry(trade: ActiveTrade, yes_book: dict, no_book: dict) -> Optional[dict]:
+def parse_window_end_ts(market_slug: str) -> int:
+    """market_slug is always '{coin}-updown-5m-{window_end_ts}' — see polymarket_api.py."""
+    return int(market_slug.rsplit("-", 1)[1])
+
+
+def settle_at_expiry(trade: ActiveTrade, window_candle: Optional[dict]) -> Optional[dict]:
     """
-    Attempts settlement only once the market has actually expired. Reads the
-    post-expiry order-book mid-price on the selected side as a resolution
-    proxy (>=0.95 -> WIN, <=0.05 -> LOSS); still-ambiguous mid-prices return
-    None so the caller retries on the next tick.
+    Attempts settlement only once the market has actually expired. These
+    Polymarket 5-minute markets resolve on "BTC price at window close vs
+    window open" — resolved here directly from the real BTC candle spanning
+    that exact window (window_candle, looked up by the caller from
+    btc_price_api.py's already-fetched candles), NOT from Polymarket's own
+    order book. That matters: once a market closes, its order book empties
+    out completely (no bids, no asks), and there is no way to distinguish a
+    WIN from a LOSS from an empty book — the old mid-price heuristic would
+    stay permanently ambiguous and the trade would never settle.
+
+    window_candle is None until that specific candle appears in fetched data
+    (retried next tick) — {open, close} is all that's needed.
     """
     if time.time() < trade.expiry_time:
         return None
-    selected_book = yes_book if trade.selected_side == "YES" else no_book
-    bids = selected_book.get("bids", [])
-    asks = selected_book.get("asks", [])
-    if not bids or not asks:
-        return None
+    if window_candle is None:
+        return None   # candle hasn't shown up in fetched data yet — retry next tick
 
-    mid = (bids[0]["price"] + asks[0]["price"]) / 2.0
-    if mid >= 0.95:
-        won = True
-    elif mid <= 0.05:
-        won = False
+    open_, close_ = window_candle["open"], window_candle["close"]
+    if close_ > open_:
+        btc_direction = 1
+    elif close_ < open_:
+        btc_direction = -1
     else:
-        return None   # still ambiguous, retry next tick
+        btc_direction = 0   # exact tie — vanishingly rare; Polymarket itself has to break it somehow,
+                             # we treat it as a loss for the side that needed a strict move.
 
+    won = btc_direction == trade.direction
     shares = trade.stake / trade.entry_price if trade.entry_price > 0 else 0.0
     exit_price = 1.0 if won else 0.0
     pnl = shares * exit_price - trade.stake
     return_pct = pnl / trade.stake if trade.stake else 0.0
-    reason = "Held to market expiry." + (" WIN." if won else " LOSS.")
+    move = "closed UP" if btc_direction == 1 else ("closed DOWN" if btc_direction == -1 else "was flat")
+    reason = (f"Held to market expiry. BTC {move} over the window ({open_:.2f} -> {close_:.2f}). "
+              + ("WIN." if won else "LOSS."))
     return _finalize(trade, status="SETTLED", exit_time=time.time(), exit_price=exit_price,
                       exit_reason=reason, pnl=pnl, return_pct=return_pct)
 

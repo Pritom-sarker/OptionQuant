@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Tab 1 — BTC/USD Prediction{% endblock %}
+{% block content %}
+<h1 class="page-title">BTCUSD Polymarket Signal Viewer</h1>
+<p class="caption">⚠️ Visualisation only — no order book, no mock trading, no real orders, no wallet.
+  <span class="live-status"><span class="live-dot"></span>live — charts refresh every 30s</span>
+</p>
+
+<div id="tab1-live">
+  {% include "partials/tab1_live.html" %}
+</div>
+
+<script>
+  startPolling("/api/tab1/live", "tab1-live", 2000);
+  startImageRefresh(30000);
+</script>
+{% endblock %}

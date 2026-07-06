@@ -1,0 +1,71 @@
+{% import "partials/_macros.html" as m %}
+
+{% if not market_ok %}
+<div class="callout" style="border-left-color: var(--amber);">No active BTCUSD 5-minute Polymarket market found right now. Retrying next refresh.</div>
+{% else %}
+
+<h2 class="section">Current Market</h2>
+<p><strong>Scanning now:</strong> <a href="{{ market._market_url }}" target="_blank" rel="noopener">{{ market.question or market._slug }}</a></p>
+<p><strong>Next contract (in ~{{ tte }}s):</strong> <a href="{{ next_url }}" target="_blank" rel="noopener">{{ next_slug }}</a></p>
+<p class="caption">Scan interval: every 60s. When this contract's 5-minute window ends, the app automatically switches to the next BTC Up/Down contract.</p>
+
+<div class="metric-grid">
+  {{ m.metric("Market", (market.question or "—")[:28]) }}
+  {{ m.metric("Expiry Time", expiry_str) }}
+  {{ m.metric("Current Threshold", "N/A (relative)") }}
+  {{ m.metric("YES Price", yes_price) }}
+  {{ m.metric("NO Price", no_price) }}
+</div>
+<p class="caption">This market resolves on relative price movement (BTC price at window close vs. window open) —
+  Polymarket does not publish an absolute strike/threshold value for it.</p>
+
+<div class="metric-grid">
+  {{ m.metric("Tab 1 Signal", predicted_label) }}
+  {{ m.metric("Selected Side", selected_side) }}
+  {{ m.metric("Current YES Price", yes_price) }}
+  {{ m.metric("Current NO Price", no_price) }}
+</div>
+<div class="metric-grid">
+  {{ m.metric("YES Pressure", yes_pressure, yes_trend) }}
+  {{ m.metric("NO Pressure", no_pressure, no_trend) }}
+  {{ m.metric("Final Decision", decision_icon + " " + final_decision) }}
+</div>
+
+<h2 class="section">Explanation</h2>
+<div class="callout">{{ explanation }}</div>
+
+<h2 class="section">Live Order Book</h2>
+<div class="chart-grid">
+  <div>
+    <p class="caption">YES</p>
+    {{ m.data_table(["Field","Value"], yes_rows) }}
+  </div>
+  <div>
+    <p class="caption">NO</p>
+    {{ m.data_table(["Field","Value"], no_rows) }}
+  </div>
+</div>
+
+<h2 class="section">Chart 1 — Contract Price Movement</h2>
+<div class="chart-card"><img data-live="/charts/tab2/price.png" src="/charts/tab2/price.png" alt="Contract price"></div>
+
+<h2 class="section">Chart 2 — Order Book Pressure</h2>
+<div class="chart-card"><img data-live="/charts/tab2/pressure.png" src="/charts/tab2/pressure.png" alt="Order book pressure"></div>
+
+<div class="chart-grid">
+  <div>
+    <h2 class="section">Chart 3 — Top-5 Bid/Ask Depth</h2>
+    <div class="chart-card"><img data-live="/charts/tab2/depth_bar.png" src="/charts/tab2/depth_bar.png" alt="Depth bar chart"></div>
+  </div>
+  <div>
+    <h2 class="section">Chart 4 — Order Book Ladder</h2>
+    <div class="chart-card"><img data-live="/charts/tab2/ladder.png" src="/charts/tab2/ladder.png" alt="Order book ladder"></div>
+  </div>
+</div>
+
+<h2 class="section">Chart 5 — Decision Checklist</h2>
+<div class="chart-card"><img data-live="/charts/tab2/checklist.png" src="/charts/tab2/checklist.png" alt="Decision checklist"></div>
+
+<p class="caption">Tab 2 never creates a real order or a paper trade by itself — it only reports OBSERVE / WAIT / READY FOR PAPER ENTRY.</p>
+
+{% endif %}

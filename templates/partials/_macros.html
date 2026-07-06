@@ -1,0 +1,22 @@
+{% macro metric(label, value, delta=None, delta_class=None, value_class=None) %}
+<div class="metric-card">
+  <div class="metric-label">{{ label }}</div>
+  <div class="metric-value{{ ' ' + value_class if value_class else '' }}">{{ value }}</div>
+  {% if delta %}<div class="metric-delta{{ ' ' + delta_class if delta_class else '' }}">{{ delta }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro data_table(headers, rows) %}
+<div class="table-scroll">
+<table class="data-table">
+  <thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>{% for h in headers %}<td>{{ row[h] }}</td>{% endfor %}</tr>
+    {% else %}
+    <tr><td colspan="{{ headers|length }}" style="color: var(--text-faint);">No data.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endmacro %}

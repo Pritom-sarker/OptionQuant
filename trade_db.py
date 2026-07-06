@@ -260,6 +260,12 @@ def fetch_all_trades() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def fetch_trade(trade_id: int) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def fetch_candidate(candidate_id: int) -> dict | None:
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM candidates WHERE id = ?", (candidate_id,)).fetchone()

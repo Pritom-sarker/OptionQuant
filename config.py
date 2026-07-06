@@ -63,8 +63,7 @@ BACKFILL_CANDLES_TARGET = 1000
 
 # ─── Tab 2: Polymarket Order Book Simulator ─────────────────────────────────
 # Paper-trading simulation only — no wallet, no real order, no API trading.
-OB_REFRESH_MS_FAST     = 3_000    # scan cadence while decision is READY (trade would be placed)
-OB_REFRESH_MS_SLOW     = 30_000   # scan cadence otherwise (OBSERVE / WAIT) — fewer API calls
+OB_REFRESH_MS          = 60_000   # flat scan cadence — independent of decision state
 CANDIDATE_EXPIRY_SEC   = 60       # a candidate has 60s to find a valid entry
 
 MAX_ENTRY_PRICE        = 0.50    # selected contract must be <= this
@@ -90,8 +89,8 @@ DEFAULT_STAKE = 1.0   # $1 per simulated paper trade — never a real order
 TAB3_DB_PATH = "tab3_trades.db"
 TAB3_CHART_DIR = "tab3_charts"
 
-DEFAULT_TAB3_SNAPSHOT_INTERVAL_SEC     = 2      # Trade Snapshot Interval
-DEFAULT_TAB3_ACTIVE_TRADE_INTERVAL_SEC = 1      # Active Trade Interval
+DEFAULT_TAB3_REFRESH_INTERVAL_SEC      = 3      # engine tick — fast, drives Tab 3's live view + trade logic
+DEFAULT_TAB3_CHART_REFRESH_SEC         = 30     # chart images only regenerate this often — values are always live
 DEFAULT_TAB3_OBSERVATION_BURST_SEC     = 20     # Candidate Observation Time (initial burst, ~10 snapshots)
 
 DEFAULT_TAB3_STAKE                  = 1.0

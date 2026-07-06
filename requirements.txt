@@ -1,7 +1,10 @@
-streamlit>=1.32
-streamlit-autorefresh>=1.0.1
+fastapi>=0.128
+uvicorn[standard]>=0.34
+jinja2>=3.1
+python-multipart>=0.0.9
 pandas>=2.0
 numpy>=1.24
 requests>=2.31
 matplotlib>=3.8
 plotly>=5.20
+kaleido>=0.2.1

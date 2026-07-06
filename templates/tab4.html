@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Tab 4 — Trade Details{% endblock %}
+{% block content %}
+<h1 class="page-title">Tab 4 — Trade Details</h1>
+<p class="caption">Full breakdown of the currently running trade.
+  <span class="live-status"><span class="live-dot"></span>live — charts refresh every 30s</span>
+</p>
+
+<div id="tab4-live">
+  {% include "partials/tab4_live.html" %}
+</div>
+
+<script>
+  startPolling("/api/tab4/live", "tab4-live", 2000);
+  startImageRefresh(30000);
+</script>
+{% endblock %}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}BTCUSD Polymarket Signal Viewer{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+  <script src="{{ url_for('static', path='js/poll.js') }}" defer></script>
+</head>
+<body>
+  <nav class="topnav">
+    <span class="brand">BTCUSD · Polymarket Signal Viewer</span>
+    <a href="/tab1" class="{{ 'active' if active_tab == 'tab1' else '' }}">Tab 1: BTC/USD Prediction</a>
+    <a href="/tab2" class="{{ 'active' if active_tab == 'tab2' else '' }}">Tab 2: Order Book Simulator</a>
+    <a href="/tab3" class="{{ 'active' if active_tab == 'tab3' else '' }}">Tab 3: Live Trade</a>
+    <a href="/tab4" class="{{ 'active' if active_tab == 'tab4' else '' }}">Tab 4: Trade Details</a>
+    <a href="/tab5" class="{{ 'active' if active_tab == 'tab5' else '' }}">Tab 5: Trade Stats &amp; Documentation</a>
+    <span class="spacer"></span>
+    <a href="/settings" class="{{ 'active' if active_tab == 'settings' else '' }}">⚙ Settings</a>
+  </nav>
+  <div class="page">
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

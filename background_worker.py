@@ -1,0 +1,340 @@
+"""
+Background engine — three independent daemon threads replacing Streamlit's
+autorefresh-triggered reruns. Each loop owns its own cadence and writes into
+engine_state.state; FastAPI request handlers only ever *read* that state to
+render pages — they never do the fetching/deciding themselves. This is what
+makes Tab 3's fast trading-engine tick fully independent of Tab 1/Tab 2: it's
+not tied to any browser page being open at all.
+"""
+from __future__ import annotations
+import logging
+import os
+import threading
+import time
+
+import config
+import btc_price_api as btcapi
+import signal_engine as se
+import chart_builder as chartb
+import polymarket_api
+import orderbook_api
+import candidate_manager
+import trade_engine
+import trade_db
+from engine_state import state
+
+log = logging.getLogger("background_worker")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 1 — BTC/USD candle signal. Ported from app.py's _render_tab1 /
+# _update_live_prediction / _run_backfill_scan_once — identical logic, just
+# writing into `state` instead of st.session_state.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_backfill_scan_once(settings: dict) -> None:
+    if state.backfill_rows or state.backfill_total:
+        return
+    backfill_candles = btcapi.fetch_btcusd_candles(config.BACKFILL_CANDLES_TARGET)
+    if not backfill_candles:
+        return
+    bdf = se.candles_to_df(backfill_candles)
+    bdf = se.compute_indicators(bdf, settings["atr_length"], settings["atr_sma_length"])
+    bpat_dir = se.detect_pattern(bdf, settings["mode"], settings["atr_mult"])
+    bfilters = se.compute_filters(bdf, bpat_dir)
+    bact_ok = se.compute_active_signal(bpat_dir, bfilters, settings["enabled"])
+    brows = se.build_signal_table(bdf, bpat_dir, bfilters, bact_ok, settings["mode"],
+                                   settings["enabled"], last_n=len(bdf))
+    with state.lock:
+        state.backfill_rows = brows
+        state.backfill_total = len(backfill_candles)
+
+
+def _update_live_prediction(df, pat_dir, act_ok, filters, mode: str, enabled: dict) -> dict | None:
+    latest_time = int(df["time"].iloc[-1])
+    with state.lock:
+        last_seen_time = state.live_last_seen_time
+        ap = state.live_active_prediction
+
+    if last_seen_time is not None and latest_time == last_seen_time:
+        return ap
+
+    n = len(df)
+    if ap is not None and ap.get("result") == "PENDING":
+        matches = df.index[df["time"] == ap["time"]]
+        if len(matches):
+            pos = df.index.get_loc(matches[0])
+            if pos + 1 < n:
+                ap = se.build_signal_table(df, pat_dir, filters, act_ok, mode, enabled, last_n=n - pos)[0]
+
+    if bool(act_ok.iloc[-1]) and (ap is None or ap["time"] != latest_time):
+        ap = se.build_signal_table(df, pat_dir, filters, act_ok, mode, enabled, last_n=1)[0]
+
+    with state.lock:
+        state.live_active_prediction = ap
+        state.live_last_seen_time = latest_time
+    return ap
+
+
+def _tick_tab1() -> None:
+    settings = state.tab1_settings
+    _run_backfill_scan_once(settings)
+
+    candles = btcapi.fetch_btcusd_candles(config.NUM_CANDLES_TARGET)
+    if not candles:
+        with state.lock:
+            state.tab1_prediction = None
+            state.tab1_df = None
+            state.tab1_computed = None
+        return
+
+    df = se.candles_to_df(candles)
+    df = se.compute_indicators(df, settings["atr_length"], settings["atr_sma_length"])
+    pat_dir = se.detect_pattern(df, settings["mode"], settings["atr_mult"])
+    filters = se.compute_filters(df, pat_dir)
+    act_ok = se.compute_active_signal(pat_dir, filters, settings["enabled"])
+    results = se.evaluate_signal_results(df, pat_dir, act_ok)
+
+    active_row = _update_live_prediction(df, pat_dir, act_ok, filters, settings["mode"], settings["enabled"])
+    stats = se.compute_full_stats(df, pat_dir, act_ok, results, settings["min_signals"])
+    breakdown = se.build_condition_breakdown(df, pat_dir, settings["mode"], settings["atr_mult"],
+                                              settings["enabled"], idx=-1)
+    rows = se.build_signal_table(df, pat_dir, filters, act_ok, settings["mode"],
+                                  settings["enabled"], config.LAST_N_CANDLES_TABLE)
+
+    with state.lock:
+        state.tab1_prediction = active_row
+        state.tab1_df = df
+        state.tab1_computed = {
+            "pat_dir": pat_dir, "filters": filters, "act_ok": act_ok, "results": results,
+            "stats": stats, "breakdown": breakdown, "last_n_rows": rows,
+            "last_refreshed": time.time(),
+        }
+
+
+def tab1_loop() -> None:
+    while True:
+        try:
+            _tick_tab1()
+        except Exception:
+            log.exception("tab1_loop tick failed")
+        time.sleep(15)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 2 — Polymarket order book observer. Ported from app.py's _render_tab2.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _tick_tab2() -> None:
+    market = polymarket_api.fetch_btcusd_market()
+    if market is None:
+        with state.lock:
+            state.tab2_market = None
+        return
+
+    with state.lock:
+        prev_slug = state.tab2_market_slug
+        observer = state.tab2_observer
+    rolled_over = prev_slug is not None and prev_slug != market["_slug"]
+
+    yes_book = orderbook_api.fetch_order_book(market["_yes_token_id"])
+    no_book = orderbook_api.fetch_order_book(market["_no_token_id"])
+
+    if observer is None:
+        observer = candidate_manager.ObservationState()
+    elif rolled_over:
+        observer.reset()
+
+    prediction = state.tab1_prediction
+    predicted_label = prediction.get("predicted_next", "UNKNOWN") if prediction else "UNKNOWN"
+    observer.observe(yes_book, no_book, prediction if predicted_label in ("GREEN", "RED") else None)
+
+    with state.lock:
+        state.tab2_market = market
+        state.tab2_market_slug = market["_slug"]
+        state.tab2_observer = observer
+        state.tab2_last_refresh = time.time()
+
+
+def tab2_loop() -> None:
+    while True:
+        try:
+            _tick_tab2()
+        except Exception:
+            log.exception("tab2_loop tick failed")
+        time.sleep(60)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 3 — Trading engine. Ported from app.py's _run_tab3_engine_tick /
+# _save_tab3_charts. No conditional "only when active" gating on the loop
+# itself is needed here (unlike the Streamlit version, which had to avoid
+# forcing a fast rerun of the *whole app*) — this loop is already isolated in
+# its own thread, so it simply sleeps fast while something's running and
+# slower while idle, purely to avoid hammering the Polymarket API for no
+# reason.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _save_tab3_charts(candidate, trade) -> None:
+    os.makedirs(config.TAB3_CHART_DIR, exist_ok=True)
+    cand_snaps = candidate.snapshot_history if candidate is not None else []
+    trade_snaps = trade.snapshot_history if trade is not None else []
+
+    candles = btcapi.fetch_btcusd_candles(config.NUM_CANDLES_TARGET)
+    candle_df = se.candles_to_df(candles) if candles else None
+
+    if candidate is not None:
+        candle_path = os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_candle.png")
+        fig = chartb.build_tab3_candle_chart(
+            candle_df, candidate.signal_time, direction=candidate.prediction,
+            limit_price=candidate.limit_price, entry_price=trade.entry_price if trade else None,
+            current_price=(trade_snaps[-1]["price"] if trade_snaps else
+                            (cand_snaps[-1]["selected_price"] if cand_snaps else None)),
+            exit_price=trade.exit_price if trade else None,
+            result=trade.final_result if trade else None,
+        )
+        chartb.save_figure(fig, candle_path)
+        candidate.chart_path = candle_path
+        trade_db.update_candidate_chart_path(candidate.db_id, candle_path)
+
+        pressure_path = os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_pressure.png")
+        chartb.save_figure(chartb.build_tab3_pressure_chart(cand_snaps, trade_snaps), pressure_path)
+
+        depth_path = os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_depth.png")
+        chartb.save_figure(chartb.build_tab3_depth_chart(cand_snaps, trade_snaps), depth_path)
+
+        if trade is not None:
+            trade.candle_chart_path = candle_path
+            trade.pressure_chart_path = pressure_path
+            trade.depth_chart_path = depth_path
+            trade_db.update_trade_chart_paths(trade.db_id, candle_chart_path=candle_path,
+                                               pressure_chart_path=pressure_path, depth_chart_path=depth_path)
+
+    if trade is not None and trade_snaps:
+        pnl_path = os.path.join(config.TAB3_CHART_DIR, f"trade_{trade.db_id}_pnl.png")
+        chartb.save_figure(chartb.build_tab3_pnl_chart(trade_snaps), pnl_path)
+        trade.pnl_chart_path = pnl_path
+        trade_db.update_trade_chart_paths(trade.db_id, pnl_chart_path=pnl_path)
+
+
+_CANDLE_MATCH_TOLERANCE_SEC = 5   # Binance's closeTime truncates to :59, 1s off Polymarket's exact
+                                   # on-the-minute window boundary — match within a few seconds, not exactly.
+
+
+def _find_window_candle(market_slug: str) -> dict | None:
+    """
+    The real BTC candle spanning this market's exact 5-minute window — used
+    to settle trades against actual price movement rather than Polymarket's
+    order book (which is empty and unusable once the market has closed).
+    Checks Tab 1's already-fetched rolling candles first (no extra network
+    call, since Tab 1 ticks every 15s anyway); falls back to a fresh fetch
+    only if that window has already scrolled out of Tab 1's window.
+    """
+    window_end_ts = trade_engine.parse_window_end_ts(market_slug)
+
+    with state.lock:
+        df = state.tab1_df
+
+    if df is not None:
+        diffs = (df["time"] - window_end_ts).abs()
+        if len(diffs) and diffs.min() <= _CANDLE_MATCH_TOLERANCE_SEC:
+            row = df.loc[diffs.idxmin()]
+            return {"open": float(row["open"]), "close": float(row["close"])}
+
+    for c in btcapi.fetch_btcusd_candles(config.BACKFILL_CANDLES_TARGET):
+        if abs(c["time"] - window_end_ts) <= _CANDLE_MATCH_TOLERANCE_SEC:
+            return c
+    return None
+
+
+def _tick_tab3() -> None:
+    settings = state.tab3_settings
+    with state.lock:
+        candidate = state.tab3_candidate
+        trade = state.tab3_trade
+
+    market = polymarket_api.fetch_btcusd_market()
+    if market is None and candidate is None and trade is None:
+        with state.lock:
+            state.tab3_market_ok = False
+        return
+
+    if trade is not None:
+        yes_id, no_id = trade.yes_token_id, trade.no_token_id
+    elif candidate is not None:
+        yes_id, no_id = candidate.yes_token_id, candidate.no_token_id
+    else:
+        yes_id, no_id = market["_yes_token_id"], market["_no_token_id"]
+
+    yes_book = orderbook_api.fetch_order_book(yes_id)
+    no_book = orderbook_api.fetch_order_book(no_id)
+
+    tab1_prediction = state.tab1_prediction
+    predicted_label = tab1_prediction.get("predicted_next", "UNKNOWN") if tab1_prediction else "UNKNOWN"
+
+    if (predicted_label in ("GREEN", "RED") and tab1_prediction is not None
+            and trade is None and market is not None):
+        signal_time = int(tab1_prediction["time"])
+        if candidate is None or candidate.signal_time != signal_time or candidate.prediction != predicted_label:
+            if candidate is not None and candidate.status == "OBSERVING":
+                trade_engine.supersede_candidate(candidate)
+            candidate = trade_engine.create_candidate(tab1_prediction, market)
+            yes_id, no_id = candidate.yes_token_id, candidate.no_token_id
+            yes_book = orderbook_api.fetch_order_book(yes_id)
+            no_book = orderbook_api.fetch_order_book(no_id)
+
+    if trade is None and candidate is not None and candidate.status == "OBSERVING":
+        if candidate.is_expired():
+            trade_engine.expire_candidate(candidate)
+            candidate = None
+        else:
+            snap = trade_engine.record_candidate_snapshot(candidate, yes_book, no_book, settings)
+            if snap["decision"] == "BUY":
+                trade = trade_engine.enter_trade(candidate, snap, settings)
+
+    if trade is not None and trade.status == "OPEN":
+        trade_engine.record_trade_snapshot(trade, yes_book, no_book)
+        should_exit, exit_reason = trade_engine.check_early_exit(trade, settings)
+        if should_exit:
+            trade_engine.settle_early_exit(trade, exit_reason)
+        elif time.time() >= trade.expiry_time:
+            window_candle = _find_window_candle(trade.market_slug)
+            trade_engine.settle_at_expiry(trade, window_candle)
+
+    # Chart images are comparatively expensive (candle fetch + matplotlib +
+    # disk I/O) — regenerate them on their own slower cadence. Values
+    # (state.tab3_candidate/trade below) are updated every tick, always —
+    # Tab 3 and Tab 4 are both fully live now; only the pictures are throttled.
+    now = time.time()
+    should_refresh_charts = (now - state.tab3_last_chart_refresh) >= settings["chart_refresh_interval"]
+    if should_refresh_charts and (candidate is not None or trade is not None):
+        _save_tab3_charts(candidate, trade)
+
+    if trade is not None and trade.status != "OPEN":
+        trade = None
+        candidate = None
+
+    with state.lock:
+        state.tab3_candidate = candidate
+        state.tab3_trade = trade
+        state.tab3_market_ok = True
+        if should_refresh_charts:
+            state.tab3_last_chart_refresh = now
+
+
+def tab3_loop() -> None:
+    while True:
+        try:
+            _tick_tab3()
+        except Exception:
+            log.exception("tab3_loop tick failed")
+        with state.lock:
+            active = state.tab3_candidate is not None or state.tab3_trade is not None
+            interval = state.tab3_settings["refresh_interval"]
+        time.sleep(interval if active else 10)
+
+
+def start_background_threads() -> None:
+    threading.Thread(target=tab1_loop, daemon=True, name="tab1_loop").start()
+    threading.Thread(target=tab2_loop, daemon=True, name="tab2_loop").start()
+    threading.Thread(target=tab3_loop, daemon=True, name="tab3_loop").start()

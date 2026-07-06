@@ -1,0 +1,91 @@
+{% import "partials/_macros.html" as m %}
+
+{% set pred = prediction.predicted_next if prediction else "UNKNOWN" %}
+{% set banner_class = "green" if pred == "GREEN" else ("red" if pred == "RED" else "neutral") %}
+<div class="prediction-banner"
+     style="background: var(--{{ 'green-bg' if banner_class=='green' else ('red-bg' if banner_class=='red' else 'surface') }});
+            border-color: var(--{{ 'green' if banner_class=='green' else ('red' if banner_class=='red' else 'border') }});">
+  <div class="headline" style="color: var(--{{ 'green' if banner_class=='green' else ('red' if banner_class=='red' else 'text-dim') }});">
+    Current Active Prediction: {{ pred }}
+  </div>
+  <div class="detail">
+    {% if prediction %}
+      Signal Candle Time: {{ prediction.time_str }}<br>
+      Signal Candle Close: ${{ "%.2f"|format(prediction.close) }}<br>
+      Current Result: {{ prediction.result }}<br>
+      Reason: {{ prediction.reason }}
+    {% else %}
+      Signal Candle Time: —<br>Signal Candle Close: —<br>
+      Current Result: —<br>Reason: No valid signal detected in the current candle window.
+    {% endif %}
+  </div>
+</div>
+
+{% if not candles_ok %}
+<div class="callout" style="border-left-color: var(--amber);">Could not fetch real BTC/USD candle data right now. Retrying next refresh.</div>
+{% else %}
+
+{% if candles_count < min_needed %}
+<div class="callout" style="border-left-color: var(--amber);">
+  Only {{ candles_count }} candles available so far — need at least {{ min_needed }} for stable ATR/ATR-SMA.
+  Showing what's available; values will stabilize as history builds.
+</div>
+{% endif %}
+
+<div class="metric-grid">
+  {{ m.metric("Latest BTCUSD Close", "$%.2f"|format(last_close)) }}
+  {{ m.metric("Latest ATR", ("$%.2f"|format(last_atr)) if last_atr is not none else "—") }}
+  {{ m.metric("Selected Pattern", settings.mode) }}
+  {{ m.metric("Last Refresh", last_refresh_str) }}
+</div>
+<div class="metric-grid">
+  {{ m.metric("Raw Pattern Signals", stats.raw_total) }}
+  {{ m.metric("Active Signals" + (" ⚠" if stats.below_min_signals else ""), stats.active_total) }}
+  {{ m.metric("UP Signals", stats.up_signals) }}
+  {{ m.metric("DOWN Signals", stats.dn_signals) }}
+</div>
+<div class="metric-grid">
+  {{ m.metric("Win Rate", "%.1f%% (%dW / %dL)"|format(stats.win_rate, stats.wins, stats.losses)) }}
+  {{ m.metric("UP Win Rate", ("%.1f%%"|format(stats.up_win_rate)) if stats.up_total else "—") }}
+  {{ m.metric("DOWN Win Rate", ("%.1f%%"|format(stats.dn_win_rate)) if stats.dn_total else "—") }}
+  {{ m.metric("Max Consecutive Losses", stats.max_consecutive_losses) }}
+</div>
+<div class="metric-grid">
+  {{ m.metric("Current Loss Streak", stats.current_loss_streak) }}
+  {{ m.metric("Last Signal", stats.last_signal) }}
+  {{ m.metric("Last Result", stats.last_result) }}
+  {{ m.metric("Pending Signal", stats.pending_signal) }}
+</div>
+{% if stats.below_min_signals %}
+<div class="caption">⚠ Active Signals ({{ stats.active_total }}) is below the minimum of {{ settings.min_signals }}
+  set in Settings — win rate not yet statistically reliable.</div>
+{% endif %}
+
+<div class="chart-card">
+  <img data-live="/charts/tab1/candles.png" src="/charts/tab1/candles.png" alt="BTCUSD candle chart">
+</div>
+
+<h2 class="section">Historical Entry Scan</h2>
+{% if backfill %}
+<div class="metric-grid">
+  {{ m.metric("Candles Checked", backfill.total_checked) }}
+  {{ m.metric("Entries Found", backfill.entries) }}
+  {{ m.metric("GREEN Predictions", backfill.green) }}
+  {{ m.metric("RED Predictions", backfill.red) }}
+  {{ m.metric("Entry Rate", backfill.entry_rate) }}
+  {{ m.metric("Latest Entry", backfill.latest_entry_time) }}
+</div>
+<div class="caption">Showing {{ backfill.shown }} of {{ backfill.total_checked }} scanned candles (entries only).</div>
+{{ m.data_table(["Time","Open","High","Low","Close","ATR","Body","Body/ATR","Pattern Matched","Prediction","Reason"], backfill.rows) }}
+{% else %}
+<div class="callout" style="border-left-color: var(--amber);">Backfill scan could not fetch any historical candles (Binance and Coinbase both failed).</div>
+{% endif %}
+
+<h2 class="section">Current Candle — What's Matching, What's Missing</h2>
+{{ m.data_table(["Condition","Actual","Required","Status"], breakdown) }}
+<div class="caption">Current candle closed at {{ last_time_str }}.</div>
+
+<h2 class="section">Last {{ last_n_count }} Candle Signal Check</h2>
+{{ m.data_table(["Time","Open","High","Low","Close","Pattern","Predicted Next","Next Close (actual)","Result","Reason"], last_n_rows) }}
+
+{% endif %}

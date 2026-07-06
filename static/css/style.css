@@ -1,0 +1,313 @@
+/* ── Design tokens — change these to retheme the whole app ────────────── */
+:root {
+  --bg: #0d0f14;
+  --surface: #151821;
+  --surface-2: #1c202b;
+  --border: #2a2f3d;
+  --text: #e7e9ee;
+  --text-dim: #9aa1b1;
+  --text-faint: #6b7284;
+  --green: #22c55e;
+  --green-bg: #0f2419;
+  --red: #ef4444;
+  --red-bg: #2a1416;
+  --amber: #f59e0b;
+  --blue: #3b82f6;
+  --purple: #a855f7;
+  --radius: 10px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Top nav ────────────────────────────────────────────────────────────── */
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 20px;
+  height: 56px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  overflow-x: auto;
+}
+
+.topnav .brand {
+  font-weight: 700;
+  font-size: 15px;
+  margin-right: 24px;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.topnav a {
+  color: var(--text-dim);
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.topnav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.topnav a.active { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+
+.topnav .spacer { flex: 1; }
+
+/* ── Page shell ─────────────────────────────────────────────────────────── */
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+
+h1.page-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.caption {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
+.caption.warn { color: var(--amber); }
+
+h2.section {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 28px 0 12px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+hr.divider { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+
+/* ── Metric cards ───────────────────────────────────────────────────────── */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.metric-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.metric-label {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.metric-value {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.metric-delta { font-size: 12px; margin-top: 2px; }
+.metric-delta.up, .metric-value.green { color: var(--green); }
+.metric-delta.down, .metric-value.red { color: var(--red); }
+
+/* ── Badges / pills ─────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.badge.green { background: var(--green-bg); color: var(--green); }
+.badge.red { background: var(--red-bg); color: var(--red); }
+.badge.neutral { background: var(--surface-2); color: var(--text-dim); }
+
+/* ── Prediction banner (Tab 1) ──────────────────────────────────────────── */
+.prediction-banner {
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  border-width: 2px;
+  border-style: solid;
+}
+.prediction-banner .headline {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.prediction-banner .detail { color: var(--text-dim); font-size: 13.5px; margin-top: 10px; line-height: 1.8; }
+
+/* ── Info / callout boxes ───────────────────────────────────────────────── */
+.callout {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 12px 0;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.callout.idle { border-left-color: var(--text-faint); color: var(--text-dim); white-space: pre-line; }
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+table.data-table th {
+  text-align: left;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  color: var(--text-faint);
+  font-weight: 600;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+table.data-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+table.data-table tr:last-child td { border-bottom: none; }
+table.data-table tr:hover td { background: var(--surface-2); }
+.table-scroll { overflow-x: auto; border-radius: var(--radius); }
+
+/* ── Charts / images ────────────────────────────────────────────────────── */
+.chart-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-bottom: 16px;
+}
+.chart-card img { width: 100%; height: auto; display: block; border-radius: 6px; }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 800px) { .chart-grid { grid-template-columns: 1fr; } }
+
+/* ── Steps (narrative) ──────────────────────────────────────────────────── */
+.step {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  font-size: 13.5px;
+}
+.step .step-num {
+  display: inline-block;
+  min-width: 22px;
+  color: var(--purple);
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+/* ── Expander (View Log) ────────────────────────────────────────────────── */
+details.trade-log {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  padding: 0;
+}
+details.trade-log summary {
+  cursor: pointer;
+  padding: 12px 16px;
+  font-weight: 600;
+  font-size: 13.5px;
+  list-style: none;
+}
+details.trade-log summary::-webkit-details-marker { display: none; }
+details.trade-log[open] summary { border-bottom: 1px solid var(--border); }
+details.trade-log .trade-log-body { padding: 16px; }
+
+/* ── Forms (Settings) ───────────────────────────────────────────────────── */
+form.settings-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 12px; color: var(--text-dim); }
+.field input[type="number"], .field input[type="text"], .field select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.field.checkbox { flex-direction: row; align-items: center; gap: 8px; }
+.form-actions { grid-column: 1 / -1; margin-top: 6px; }
+
+button, input[type="submit"] {
+  background: var(--blue);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 18px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover, input[type="submit"]:hover { filter: brightness(1.1); }
+
+/* ── Live status line ───────────────────────────────────────────────────── */
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 0 rgba(34,197,94,0.6);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
+  70% { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
