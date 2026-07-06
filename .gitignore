@@ -4,3 +4,4 @@ __pycache__/
 .streamlit/secrets.toml
 tab3_trades.db
 tab3_charts/
+app_settings.json

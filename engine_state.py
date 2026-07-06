@@ -4,12 +4,34 @@ Process-wide application state — replaces Streamlit's st.session_state.
 A background thread (background_worker.py) and FastAPI request handlers now
 run concurrently, unlike Streamlit's single-threaded rerun model, so every
 read/write goes through this one lock-guarded singleton.
+
+Settings persistence: tab1_settings/tab3_settings are also mirrored to
+SETTINGS_PATH on every change (see save_settings(), called from
+routes/pages.py's POST handlers) and reloaded here at startup if present.
+This survives a local restart/reload always; it only survives a Railway
+redeploy if the filesystem itself persists across deploys (e.g. a mounted
+Volume) — Railway's default ephemeral container filesystem does not, so the
+committed config.py defaults (DEFAULT_TAB3_IMMEDIATE_MODE etc.) are still
+the only thing guaranteed to survive every deploy. Change those defaults
+directly for anything that must never silently reset.
 """
 from __future__ import annotations
+import json
+import os
 import threading
 from typing import Optional
 
 import config
+
+SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_settings.json")
+
+
+def _load_saved_settings() -> dict:
+    try:
+        with open(SETTINGS_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
 
 
 class AppState:
@@ -71,6 +93,25 @@ class AppState:
         self.tab3_trade = None
         self.tab3_last_chart_refresh: float = 0.0   # gates chart image regeneration only — values are always live
         self.tab3_market_ok: bool = False
+
+        saved = _load_saved_settings()
+        if "tab1_settings" in saved:
+            self.tab1_settings.update(saved["tab1_settings"])
+        if "tab3_settings" in saved:
+            self.tab3_settings.update(saved["tab3_settings"])
+
+
+def save_settings() -> None:
+    """Persists the current tab1/tab3 settings to disk — called after every
+    POST /settings/tab1 or /settings/tab3 so a local restart picks them back
+    up (see the module docstring for the Railway-redeploy caveat)."""
+    with state.lock:
+        payload = {"tab1_settings": state.tab1_settings, "tab3_settings": state.tab3_settings}
+    try:
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(payload, f, indent=2)
+    except OSError:
+        pass
 
 
 state = AppState()

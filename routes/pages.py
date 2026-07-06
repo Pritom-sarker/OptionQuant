@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse
 
 import config
-from engine_state import state
+from engine_state import state, save_settings
 from templates_engine import templates
 import view_context as vc
 
@@ -93,6 +93,7 @@ async def settings_tab1(request: Request):
             "min_signals": int(form.get("min_signals", config.DEFAULT_MIN_SIGNALS)),
             "show_ema": checked("show_ema"), "show_signals": checked("show_signals"),
         }
+    save_settings()
     return RedirectResponse(url="/settings?saved=1", status_code=303)
 
 
@@ -116,4 +117,5 @@ def settings_tab3(
             "min_liquidity": min_liquidity, "pressure_threshold": pressure_threshold,
             "depth_stable_tolerance": depth_stable_tolerance, "immediate_mode": immediate_mode,
         }
+    save_settings()
     return RedirectResponse(url="/settings?saved=1", status_code=303)
