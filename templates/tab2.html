@@ -3,7 +3,7 @@
 {% block content %}
 <h1 class="page-title">Polymarket Order Book Simulator</h1>
 <p class="caption">⚠️ Paper-trading simulation only — no wallet, no order placement, no API trading. Always active — runs independently of Tab 1.
-  <span class="live-status"><span class="live-dot"></span>live — charts refresh every 30s</span>
+  <span class="live-status" id="live-status-tab2"><span class="live-dot" id="live-dot-tab2"></span><span id="live-text-tab2">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab2">last update: —</span></span>
 </p>
 
 <div id="tab2-live">
@@ -11,7 +11,7 @@
 </div>
 
 <script>
-  startPolling("/api/tab2/live", "tab2-live", 2000);
+  startPolling("/api/tab2/live", "tab2-live", 2000, "tab2");
   startImageRefresh(30000);
 </script>
 {% endblock %}

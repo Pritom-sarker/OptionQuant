@@ -4,7 +4,7 @@
 <h1 class="page-title">Tab 3 — Live Trade</h1>
 <p class="caption">⚠️ Paper-trading simulation only — no wallet, no order placement, no real Polymarket trading, ever.
   See Tab 4 for the full detail breakdown.
-  <span class="live-status"><span class="live-dot"></span>live — charts refresh every 30s</span>
+  <span class="live-status" id="live-status-tab3"><span class="live-dot" id="live-dot-tab3"></span><span id="live-text-tab3">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab3">last update: —</span></span>
 </p>
 
 <div id="tab3-live">
@@ -12,7 +12,7 @@
 </div>
 
 <script>
-  startPolling("/api/tab3/live", "tab3-live", 2000);
+  startPolling("/api/tab3/live", "tab3-live", 2000, "tab3");
   startImageRefresh(30000);
 </script>
 {% endblock %}

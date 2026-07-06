@@ -3,7 +3,7 @@
 {% block content %}
 <h1 class="page-title">Tab 4 — Trade Details</h1>
 <p class="caption">Full breakdown of the currently running trade.
-  <span class="live-status"><span class="live-dot"></span>live — charts refresh every 30s</span>
+  <span class="live-status" id="live-status-tab4"><span class="live-dot" id="live-dot-tab4"></span><span id="live-text-tab4">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab4">last update: —</span></span>
 </p>
 
 <div id="tab4-live">
@@ -11,7 +11,7 @@
 </div>
 
 <script>
-  startPolling("/api/tab4/live", "tab4-live", 2000);
+  startPolling("/api/tab4/live", "tab4-live", 2000, "tab4");
   startImageRefresh(30000);
 </script>
 {% endblock %}

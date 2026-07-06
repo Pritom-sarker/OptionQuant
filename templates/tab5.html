@@ -3,7 +3,7 @@
 {% block content %}
 <h1 class="page-title">Tab 5 — Trade Stats &amp; Documentation</h1>
 <p class="caption">All past trades — performance stats, click a row's Details link for the full report.
-  <span class="live-status"><span class="live-dot"></span>live — charts refresh every 30s</span>
+  <span class="live-status" id="live-status-tab5"><span class="live-dot" id="live-dot-tab5"></span><span id="live-text-tab5">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab5">last update: —</span></span>
 </p>
 
 <div id="tab5-live">
@@ -11,7 +11,7 @@
 </div>
 
 <script>
-  startPolling("/api/tab5/live", "tab5-live", 2000);
+  startPolling("/api/tab5/live", "tab5-live", 2000, "tab5");
   startImageRefresh(30000);
 </script>
 {% endblock %}
