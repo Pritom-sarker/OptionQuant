@@ -90,6 +90,15 @@ def fetch_btcusd_market() -> Optional[dict]:
     best = None
     for i in range(config.WINDOWS_TO_CHECK):
         window_end_ts = aligned + i * 300
+        if window_end_ts <= now:
+            # This window's own price-determining period has already fully
+            # elapsed. Never rely solely on the API's active/closed flags or
+            # endDate-derived TTE to catch this — both can lag the real clock
+            # by a few seconds right after a candle closes, which would let an
+            # already-resolved window still look "active" with a small
+            # positive TTE and win as "soonest to expire". window_end_ts
+            # itself is unambiguous, so check it directly first.
+            continue
         slug = f"{config.COIN}-updown-5m-{window_end_ts}"
         m = _fetch_market_by_slug(slug)
         if not m or not m.get("active") or m.get("closed"):
