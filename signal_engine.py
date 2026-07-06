@@ -131,6 +131,58 @@ def compute_active_signal(pat_dir: pd.Series, filters: dict[str, pd.Series], ena
     return ok
 
 
+PATTERN_PRIORITY = ["ATR Reversal", "Engulfing", "Hammer/SS", "Exhaustion"]
+
+
+def evaluate_patterns(df: pd.DataFrame, patterns_settings: dict, atr_mult: float) -> dict:
+    """
+    Runs every *enabled* base pattern's own detect_pattern/compute_filters/
+    compute_active_signal completely independently of the others — identical,
+    unmodified per-pattern math to a single-pattern Pine strategy (Pine itself
+    never runs more than one pattern at a time, so there is no "combined mode"
+    to match there).
+
+    Multiple enabled patterns are resolved to a single signal per candle by
+    PATTERN_PRIORITY order: the highest-priority enabled pattern that actually
+    fired a raw shape on that candle "wins" the candle, and only *that*
+    pattern's own filter toggles decide whether the candle's signal is active
+    — other enabled patterns' filters never apply to a shape they didn't
+    themselves detect.
+    """
+    per_pattern: dict[str, dict] = {}
+    for name in PATTERN_PRIORITY:
+        cfg = patterns_settings.get(name)
+        if not cfg or not cfg.get("enabled"):
+            continue
+        pat_dir = detect_pattern(df, name, atr_mult)
+        filters = compute_filters(df, pat_dir)
+        act_ok = compute_active_signal(pat_dir, filters, cfg["filters"])
+        per_pattern[name] = {
+            "pat_dir": pat_dir, "filters": filters, "act_ok": act_ok,
+            "enabled_filters": cfg["filters"],
+        }
+
+    n = len(df)
+    combined_dir = pd.Series(0, index=df.index)
+    combined_mode = pd.Series([""] * n, index=df.index, dtype=object)
+    combined_act_ok = pd.Series(False, index=df.index)
+
+    for pos in range(n):
+        i = df.index[pos]
+        for name, p in per_pattern.items():
+            d = int(p["pat_dir"].loc[i])
+            if d != 0:
+                combined_dir.loc[i] = d
+                combined_mode.loc[i] = name
+                combined_act_ok.loc[i] = bool(p["act_ok"].loc[i])
+                break
+
+    return {
+        "per_pattern": per_pattern, "combined_dir": combined_dir,
+        "combined_mode": combined_mode, "combined_act_ok": combined_act_ok,
+    }
+
+
 def build_condition_breakdown(df: pd.DataFrame, pat_dir: pd.Series, mode: str, atr_mult: float,
                                enabled: dict[str, bool], idx: int = -1) -> list[dict]:
     """
@@ -412,36 +464,49 @@ def build_reason(mode: str, d: int, act_ok: bool, filt_status: dict[str, str], b
     return f"{lead} Next candle closed {side} signal close ({signal_close:.2f}), so result = {result}."
 
 
-def build_signal_table(df: pd.DataFrame, pat_dir: pd.Series, filters: dict[str, pd.Series],
-                        act_ok: pd.Series, mode: str, enabled: dict[str, bool], last_n: int) -> list[dict]:
-    """Builds the last-N-candle next-candle-prediction table rows, newest last."""
-    results = evaluate_signal_results(df, pat_dir, act_ok)
+def build_signal_table(df: pd.DataFrame, per_pattern: dict, combined_dir: pd.Series,
+                        combined_mode: pd.Series, combined_act_ok: pd.Series, last_n: int) -> list[dict]:
+    """
+    Builds the last-N-candle next-candle-prediction table rows, newest last.
+    `per_pattern`/`combined_*` come from evaluate_patterns() — each row is
+    displayed using whichever enabled pattern actually won that candle
+    (combined_mode), falling back to the highest-priority enabled pattern for
+    candles where nothing fired (so filter columns still have something
+    sensible to show).
+    """
+    results = evaluate_signal_results(df, combined_dir, combined_act_ok)
+    fallback_pattern = next(iter(per_pattern), None)
     rows = []
     idx_positions = range(max(0, len(df) - last_n), len(df))
     for pos in idx_positions:
         i = df.index[pos]
-        d = int(pat_dir.loc[i])
+        d = int(combined_dir.loc[i])
+        mode = combined_mode.loc[i] or fallback_pattern
         atr_val = df["atr"].loc[i]
         body_val = df["body"].loc[i]
         ratio = body_val / atr_val if pd.notna(atr_val) and atr_val > 0 else float("nan")
 
         filt_status = {}
-        for key in ("f1", "f2", "f3", "f4", "f5"):
-            if not enabled.get(key, True):
-                filt_status[key] = "OFF"
-            else:
-                val = filters[key].loc[i]
-                passed = bool(val) if pd.notna(val) else False
-                filt_status[key] = "PASS" if passed else "FAIL"
+        if mode is not None:
+            p = per_pattern[mode]
+            for key in ("f1", "f2", "f3", "f4", "f5"):
+                if not p["enabled_filters"].get(key, True):
+                    filt_status[key] = "OFF"
+                else:
+                    val = p["filters"][key].loc[i]
+                    passed = bool(val) if pd.notna(val) else False
+                    filt_status[key] = "PASS" if passed else "FAIL"
+        else:
+            filt_status = {k: "OFF" for k in ("f1", "f2", "f3", "f4", "f5")}
 
-        predicted = bool(act_ok.loc[i]) if d != 0 else False
+        predicted = bool(combined_act_ok.loc[i]) if d != 0 else False
         predicted_next = color_label(d) if predicted else "UNKNOWN"
         result = results.loc[i]  # WIN / LOSS / PENDING / None
 
         next_close = df["close"].iloc[pos + 1] if pos + 1 < len(df) else None
         signal_close = df["close"].loc[i]
 
-        reason = build_reason(mode, d, predicted, filt_status, body_val,
+        reason = build_reason(mode or "no pattern enabled", d, predicted, filt_status, body_val,
                                atr_val if pd.notna(atr_val) else 0.0,
                                result=result, next_close=next_close, signal_close=signal_close)
 
@@ -455,6 +520,7 @@ def build_signal_table(df: pd.DataFrame, pat_dir: pd.Series, filters: dict[str, 
             "body": body_val,
             "body_atr_ratio": ratio,
             "raw_pattern": _dir_label(d),
+            "pattern_name": mode or "—",
             "f1_trend": filt_status["f1"],
             "f2_volatility": filt_status["f2"],
             "f3_close_location": filt_status["f3"],

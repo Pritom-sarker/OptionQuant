@@ -59,24 +59,39 @@ def settings_page(request: Request, saved: bool = False):
         tab1 = dict(state.tab1_settings)
         tab3 = dict(state.tab3_settings)
     ctx = {"request": request, "active_tab": "settings", "tab1": tab1, "tab3": tab3,
-           "pattern_options": config.PATTERN_OPTIONS, "saved": saved}
+           "pattern_options": config.PATTERN_OPTIONS, "pattern_slugs": config.PATTERN_SLUGS, "saved": saved}
     return templates.TemplateResponse(request, "settings.html", ctx)
 
 
 @router.post("/settings/tab1")
-def settings_tab1(
-    mode: str = Form(...), atr_length: int = Form(...), atr_mult: float = Form(...),
-    atr_sma_length: int = Form(...), min_signals: int = Form(...),
-    f1: bool = Form(False), f2: bool = Form(False), f3: bool = Form(False),
-    f4: bool = Form(False), f5: bool = Form(False),
-    show_ema: bool = Form(False), show_signals: bool = Form(False),
-):
+async def settings_tab1(request: Request):
+    """
+    One checkbox per base pattern (config.PATTERN_OPTIONS), each with its own
+    F1-F5 filter checkboxes — parsed dynamically since the field count varies
+    per pattern (FastAPI's Form(...) params can't express that). ATR length/
+    mult/SMA length and the display toggles stay single global fields.
+    """
+    form = await request.form()
+
+    def checked(name: str) -> bool:
+        return form.get(name) is not None
+
+    patterns = {}
+    for name in config.PATTERN_OPTIONS:
+        slug = config.PATTERN_SLUGS[name]
+        patterns[name] = {
+            "enabled": checked(f"enabled_{slug}"),
+            "filters": {key: checked(f"{slug}_{key}") for key in ("f1", "f2", "f3", "f4", "f5")},
+        }
+
     with state.lock:
         state.tab1_settings = {
-            "mode": mode, "atr_length": atr_length, "atr_mult": atr_mult,
-            "atr_sma_length": atr_sma_length, "min_signals": min_signals,
-            "enabled": {"f1": f1, "f2": f2, "f3": f3, "f4": f4, "f5": f5},
-            "show_ema": show_ema, "show_signals": show_signals,
+            "patterns": patterns,
+            "atr_length": int(form.get("atr_length", config.DEFAULT_ATR_LENGTH)),
+            "atr_mult": float(form.get("atr_mult", config.DEFAULT_ATR_MULTIPLIER)),
+            "atr_sma_length": int(form.get("atr_sma_length", config.DEFAULT_ATR_SMA_LENGTH)),
+            "min_signals": int(form.get("min_signals", config.DEFAULT_MIN_SIGNALS)),
+            "show_ema": checked("show_ema"), "show_signals": checked("show_signals"),
         }
     return RedirectResponse(url="/settings?saved=1", status_code=303)
 

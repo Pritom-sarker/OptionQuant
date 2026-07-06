@@ -7,25 +7,31 @@
 {% if saved %}<div class="callout" style="border-left-color: var(--green);">Settings saved.</div>{% endif %}
 
 <h2 class="section">Tab 1 — Pattern &amp; Signal</h2>
+<p class="caption">Enable as many base patterns as you like — each one runs completely independently with its own filter toggles below it.
+  When more than one enabled pattern fires on the same candle, priority order (ATR Reversal → Engulfing → Hammer/SS → Exhaustion) picks the winner for that candle.</p>
 <form class="settings-form" method="post" action="/settings/tab1">
-  <div class="field">
-    <label>Base Pattern</label>
-    <select name="mode">
-      {% for opt in pattern_options %}
-      <option value="{{ opt }}" {{ "selected" if opt == tab1.mode else "" }}>{{ opt }}</option>
-      {% endfor %}
-    </select>
-  </div>
   <div class="field"><label>ATR Length</label><input type="number" name="atr_length" value="{{ tab1.atr_length }}" min="1"></div>
   <div class="field"><label>ATR Multiplier</label><input type="number" step="0.1" name="atr_mult" value="{{ tab1.atr_mult }}" min="0.1"></div>
   <div class="field"><label>ATR SMA Length</label><input type="number" name="atr_sma_length" value="{{ tab1.atr_sma_length }}" min="5"></div>
   <div class="field"><label>Min Signals for Edge Detection</label><input type="number" name="min_signals" value="{{ tab1.min_signals }}" min="5" max="100"></div>
+  <div class="caption" style="grid-column: 1 / -1;">ATR/ATR SMA above are global — they feed the F2/F5 filters (and the ATR Reversal threshold) no matter which patterns below are enabled.</div>
 
-  <div class="field checkbox"><input type="checkbox" name="f1" id="f1" {{ "checked" if tab1.enabled.f1 else "" }}><label for="f1">F1 Trend: EMA20 &gt; EMA50 alignment</label></div>
-  <div class="field checkbox"><input type="checkbox" name="f2" id="f2" {{ "checked" if tab1.enabled.f2 else "" }}><label for="f2">F2 Volatility: ATR above ATR SMA</label></div>
-  <div class="field checkbox"><input type="checkbox" name="f3" id="f3" {{ "checked" if tab1.enabled.f3 else "" }}><label for="f3">F3 Close Location: top/bottom 30%</label></div>
-  <div class="field checkbox"><input type="checkbox" name="f4" id="f4" {{ "checked" if tab1.enabled.f4 else "" }}><label for="f4">F4 Continuation: breaks prior candle</label></div>
-  <div class="field checkbox"><input type="checkbox" name="f5" id="f5" {{ "checked" if tab1.enabled.f5 else "" }}><label for="f5">F5 Anti-chop: EMA spread &gt; ATR x 0.15</label></div>
+  {% for name in pattern_options %}
+  {% set slug = pattern_slugs[name] %}
+  {% set p = tab1.patterns[name] %}
+  <div class="pattern-block">
+    <div class="field checkbox pattern-toggle">
+      <input type="checkbox" name="enabled_{{ slug }}" id="enabled_{{ slug }}" {{ "checked" if p.enabled else "" }}>
+      <label for="enabled_{{ slug }}"><strong>{{ name }}</strong></label>
+    </div>
+    <div class="field checkbox"><input type="checkbox" name="{{ slug }}_f1" id="{{ slug }}_f1" {{ "checked" if p.filters.f1 else "" }}><label for="{{ slug }}_f1">F1 Trend: EMA20 &gt; EMA50 alignment</label></div>
+    <div class="field checkbox"><input type="checkbox" name="{{ slug }}_f2" id="{{ slug }}_f2" {{ "checked" if p.filters.f2 else "" }}><label for="{{ slug }}_f2">F2 Volatility: ATR above ATR SMA</label></div>
+    <div class="field checkbox"><input type="checkbox" name="{{ slug }}_f3" id="{{ slug }}_f3" {{ "checked" if p.filters.f3 else "" }}><label for="{{ slug }}_f3">F3 Close Location: top/bottom 30%</label></div>
+    <div class="field checkbox"><input type="checkbox" name="{{ slug }}_f4" id="{{ slug }}_f4" {{ "checked" if p.filters.f4 else "" }}><label for="{{ slug }}_f4">F4 Continuation: breaks prior candle</label></div>
+    <div class="field checkbox"><input type="checkbox" name="{{ slug }}_f5" id="{{ slug }}_f5" {{ "checked" if p.filters.f5 else "" }}><label for="{{ slug }}_f5">F5 Anti-chop: EMA spread &gt; ATR x 0.15</label></div>
+  </div>
+  {% endfor %}
+
   <div class="field checkbox"><input type="checkbox" name="show_ema" id="show_ema" {{ "checked" if tab1.show_ema else "" }}><label for="show_ema">Show EMA 20/50/200</label></div>
   <div class="field checkbox"><input type="checkbox" name="show_signals" id="show_signals" {{ "checked" if tab1.show_signals else "" }}><label for="show_signals">Show signal markers + WIN/LOSS</label></div>
 

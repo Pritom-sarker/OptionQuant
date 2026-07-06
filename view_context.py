@@ -37,6 +37,8 @@ def build_tab1_context() -> dict:
     last = df.iloc[-1]
     stats = computed["stats"]
     min_needed = max(settings["atr_length"], settings["atr_sma_length"]) + settings["atr_length"]
+    enabled_patterns = [name for name in config.PATTERN_OPTIONS if settings["patterns"].get(name, {}).get("enabled")]
+    enabled_patterns_label = " + ".join(enabled_patterns) if enabled_patterns else "None enabled"
 
     breakdown = [{"Condition": b["condition"], "Actual": b["actual"], "Required": b["required"],
                   "Status": b["status"]} for b in computed["breakdown"]]
@@ -45,7 +47,7 @@ def build_tab1_context() -> dict:
         "Time": time.strftime("%H:%M:%S", time.localtime(r["time"])),
         "Open": round(r["open"], 2), "High": round(r["high"], 2),
         "Low": round(r["low"], 2), "Close": round(r["close"], 2),
-        "Pattern": r["raw_pattern"], "Predicted Next": r["predicted_next"],
+        "Pattern": r["pattern_name"], "Predicted Next": r["predicted_next"],
         "Next Close (actual)": f"{r['next_close']:,.2f}" if r["next_close"] is not None else "pending",
         "Result": r["result"], "Reason": r["reason"],
     } for r in reversed(computed["last_n_rows"])]
@@ -60,7 +62,7 @@ def build_tab1_context() -> dict:
             "Open": round(r["open"], 2), "High": round(r["high"], 2),
             "Low": round(r["low"], 2), "Close": round(r["close"], 2),
             "ATR": _fmt(r["atr"]), "Body": round(r["body"], 2), "Body/ATR": _fmt(r["body_atr_ratio"]),
-            "Pattern Matched": r["raw_pattern"], "Prediction": r["predicted_next"], "Reason": r["reason"],
+            "Pattern Matched": r["pattern_name"], "Prediction": r["predicted_next"], "Reason": r["reason"],
         } for r in reversed(entries)]
         backfill = {
             "total_checked": backfill_total, "entries": len(entries), "green": len(green), "red": len(red),
@@ -72,6 +74,7 @@ def build_tab1_context() -> dict:
 
     return {
         "candles_ok": True, "prediction": prediction, "settings": settings, "stats": stats,
+        "enabled_patterns_label": enabled_patterns_label,
         "last_close": last["close"], "last_atr": last["atr"] if pd.notna(last["atr"]) else None,
         "last_time_str": time.strftime("%H:%M:%S", time.localtime(last["time"])),
         "last_refresh_str": time.strftime("%H:%M:%S", time.localtime(computed["last_refreshed"])),

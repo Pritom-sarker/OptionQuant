@@ -16,18 +16,23 @@ class AppState:
     def __init__(self):
         self.lock = threading.RLock()
 
-        # Tab 1 — BTC/USD signal
+        # Tab 1 — BTC/USD signal. `patterns` holds one entry per base pattern in
+        # config.PATTERN_OPTIONS — each independently enable-able, each with its
+        # own F1-F5 filter toggles. ATR length/mult/SMA length stay global (they
+        # feed the F2/F5 filters and the ATR Reversal threshold regardless of
+        # which patterns are enabled) — see signal_engine.evaluate_patterns.
         self.tab1_settings: dict = {
-            "mode": config.DEFAULT_PATTERN,
+            "patterns": {
+                name: {
+                    "enabled": (name == config.DEFAULT_PATTERN),
+                    "filters": dict(config.DEFAULT_PATTERN_FILTERS),
+                }
+                for name in config.PATTERN_OPTIONS
+            },
             "atr_length": config.DEFAULT_ATR_LENGTH,
             "atr_mult": config.DEFAULT_ATR_MULTIPLIER,
             "atr_sma_length": config.DEFAULT_ATR_SMA_LENGTH,
             "min_signals": config.DEFAULT_MIN_SIGNALS,
-            "enabled": {
-                "f1": config.DEFAULT_F1_TREND, "f2": config.DEFAULT_F2_VOLATILITY,
-                "f3": config.DEFAULT_F3_CLOSE_LOC, "f4": config.DEFAULT_F4_CONTINUATION,
-                "f5": config.DEFAULT_F5_ANTI_CHOP,
-            },
             "show_ema": config.DEFAULT_SHOW_EMA, "show_signals": config.DEFAULT_SHOW_SIGNALS,
         }
         self.tab1_prediction: Optional[dict] = None

@@ -40,17 +40,15 @@ def _run_backfill_scan_once(settings: dict) -> None:
         return
     bdf = se.candles_to_df(backfill_candles)
     bdf = se.compute_indicators(bdf, settings["atr_length"], settings["atr_sma_length"])
-    bpat_dir = se.detect_pattern(bdf, settings["mode"], settings["atr_mult"])
-    bfilters = se.compute_filters(bdf, bpat_dir)
-    bact_ok = se.compute_active_signal(bpat_dir, bfilters, settings["enabled"])
-    brows = se.build_signal_table(bdf, bpat_dir, bfilters, bact_ok, settings["mode"],
-                                   settings["enabled"], last_n=len(bdf))
+    ev = se.evaluate_patterns(bdf, settings["patterns"], settings["atr_mult"])
+    brows = se.build_signal_table(bdf, ev["per_pattern"], ev["combined_dir"], ev["combined_mode"],
+                                   ev["combined_act_ok"], last_n=len(bdf))
     with state.lock:
         state.backfill_rows = brows
         state.backfill_total = len(backfill_candles)
 
 
-def _update_live_prediction(df, pat_dir, act_ok, filters, mode: str, enabled: dict) -> dict | None:
+def _update_live_prediction(df, per_pattern, combined_dir, combined_mode, combined_act_ok) -> dict | None:
     latest_time = int(df["time"].iloc[-1])
     with state.lock:
         last_seen_time = state.live_last_seen_time
@@ -65,10 +63,12 @@ def _update_live_prediction(df, pat_dir, act_ok, filters, mode: str, enabled: di
         if len(matches):
             pos = df.index.get_loc(matches[0])
             if pos + 1 < n:
-                ap = se.build_signal_table(df, pat_dir, filters, act_ok, mode, enabled, last_n=n - pos)[0]
+                ap = se.build_signal_table(df, per_pattern, combined_dir, combined_mode,
+                                            combined_act_ok, last_n=n - pos)[0]
 
-    if bool(act_ok.iloc[-1]) and (ap is None or ap["time"] != latest_time):
-        ap = se.build_signal_table(df, pat_dir, filters, act_ok, mode, enabled, last_n=1)[0]
+    if bool(combined_act_ok.iloc[-1]) and (ap is None or ap["time"] != latest_time):
+        ap = se.build_signal_table(df, per_pattern, combined_dir, combined_mode,
+                                    combined_act_ok, last_n=1)[0]
 
     with state.lock:
         state.live_active_prediction = ap
@@ -90,23 +90,33 @@ def _tick_tab1() -> None:
 
     df = se.candles_to_df(candles)
     df = se.compute_indicators(df, settings["atr_length"], settings["atr_sma_length"])
-    pat_dir = se.detect_pattern(df, settings["mode"], settings["atr_mult"])
-    filters = se.compute_filters(df, pat_dir)
-    act_ok = se.compute_active_signal(pat_dir, filters, settings["enabled"])
-    results = se.evaluate_signal_results(df, pat_dir, act_ok)
+    ev = se.evaluate_patterns(df, settings["patterns"], settings["atr_mult"])
+    per_pattern, combined_dir, combined_mode, combined_act_ok = (
+        ev["per_pattern"], ev["combined_dir"], ev["combined_mode"], ev["combined_act_ok"])
+    results = se.evaluate_signal_results(df, combined_dir, combined_act_ok)
 
-    active_row = _update_live_prediction(df, pat_dir, act_ok, filters, settings["mode"], settings["enabled"])
-    stats = se.compute_full_stats(df, pat_dir, act_ok, results, settings["min_signals"])
-    breakdown = se.build_condition_breakdown(df, pat_dir, settings["mode"], settings["atr_mult"],
-                                              settings["enabled"], idx=-1)
-    rows = se.build_signal_table(df, pat_dir, filters, act_ok, settings["mode"],
-                                  settings["enabled"], config.LAST_N_CANDLES_TABLE)
+    active_row = _update_live_prediction(df, per_pattern, combined_dir, combined_mode, combined_act_ok)
+    stats = se.compute_full_stats(df, combined_dir, combined_act_ok, results, settings["min_signals"])
+
+    breakdown = []
+    for name, p in per_pattern.items():
+        pattern_rows = se.build_condition_breakdown(df, p["pat_dir"], name, settings["atr_mult"],
+                                                      p["enabled_filters"], idx=-1)
+        for r in pattern_rows:
+            r["condition"] = f"[{name}] {r['condition']}"
+        breakdown.extend(pattern_rows)
+    if not breakdown:
+        breakdown = [{"condition": "No base pattern enabled", "actual": "—",
+                      "required": "enable at least one base pattern in Settings", "status": "OFF"}]
+
+    rows = se.build_signal_table(df, per_pattern, combined_dir, combined_mode, combined_act_ok,
+                                  config.LAST_N_CANDLES_TABLE)
 
     with state.lock:
         state.tab1_prediction = active_row
         state.tab1_df = df
         state.tab1_computed = {
-            "pat_dir": pat_dir, "filters": filters, "act_ok": act_ok, "results": results,
+            "pat_dir": combined_dir, "act_ok": combined_act_ok, "results": results,
             "stats": stats, "breakdown": breakdown, "last_n_rows": rows,
             "last_refreshed": time.time(),
         }

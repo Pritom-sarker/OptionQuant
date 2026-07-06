@@ -31,8 +31,17 @@ CANDLE_FIDELITY_MIN = 1    # (unused for candles now — kept for polymarket_api
 LOOKBACK_HOURS      = 10
 
 # ─── Pine Script defaults (sidebar) ─────────────────────────────────────────
+# Multiple base patterns can now be enabled at once (checkboxes, not a single
+# dropdown). Each enabled pattern runs its own detect_pattern/compute_filters/
+# compute_active_signal completely independently — identical, unmodified
+# per-pattern math to the Pine strategy. When more than one enabled pattern
+# fires on the same candle, PATTERN_PRIORITY order (see signal_engine.py)
+# picks a single winner for that candle: the first enabled pattern (in this
+# order) whose raw shape actually fired.
 PATTERN_OPTIONS = ["ATR Reversal", "Engulfing", "Hammer/SS", "Exhaustion"]
-DEFAULT_PATTERN = "ATR Reversal"
+PATTERN_SLUGS = {"ATR Reversal": "atr_reversal", "Engulfing": "engulfing",
+                  "Hammer/SS": "hammer_ss", "Exhaustion": "exhaustion"}
+DEFAULT_PATTERN = "ATR Reversal"   # only this one is enabled by default
 
 DEFAULT_ATR_LENGTH     = 14
 DEFAULT_ATR_MULTIPLIER = 1.5
@@ -43,6 +52,11 @@ DEFAULT_F2_VOLATILITY   = True   # ATR above ATR SMA
 DEFAULT_F3_CLOSE_LOC    = False  # close in top/bottom 30%
 DEFAULT_F4_CONTINUATION = False  # close breaks prior candle
 DEFAULT_F5_ANTI_CHOP    = True   # EMA spread > ATR x 0.15
+
+DEFAULT_PATTERN_FILTERS = {
+    "f1": DEFAULT_F1_TREND, "f2": DEFAULT_F2_VOLATILITY, "f3": DEFAULT_F3_CLOSE_LOC,
+    "f4": DEFAULT_F4_CONTINUATION, "f5": DEFAULT_F5_ANTI_CHOP,
+}
 
 DEFAULT_SHOW_EMA     = True
 DEFAULT_SHOW_SIGNALS = True   # signal UP/DOWN markers + WIN/LOSS labels

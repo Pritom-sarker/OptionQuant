@@ -35,7 +35,7 @@
 <div class="metric-grid">
   {{ m.metric("Latest BTCUSD Close", "$%.2f"|format(last_close)) }}
   {{ m.metric("Latest ATR", ("$%.2f"|format(last_atr)) if last_atr is not none else "—") }}
-  {{ m.metric("Selected Pattern", settings.mode) }}
+  {{ m.metric("Enabled Patterns", enabled_patterns_label) }}
   {{ m.metric("Last Refresh", last_refresh_str) }}
 </div>
 <div class="metric-grid">
@@ -65,6 +65,13 @@
   <img data-live="/charts/tab1/candles.png" src="/charts/tab1/candles.png" alt="BTCUSD candle chart">
 </div>
 
+<h2 class="section">Current Candle — What's Matching, What's Missing</h2>
+{{ m.data_table(["Condition","Actual","Required","Status"], breakdown) }}
+<div class="caption">Current candle closed at {{ last_time_str }}.</div>
+
+<h2 class="section">Last {{ last_n_count }} Candle Signal Check</h2>
+{{ m.data_table(["Time","Open","High","Low","Close","Pattern","Predicted Next","Next Close (actual)","Result","Reason"], last_n_rows) }}
+
 <h2 class="section">Historical Entry Scan</h2>
 {% if backfill %}
 <div class="metric-grid">
@@ -80,12 +87,5 @@
 {% else %}
 <div class="callout" style="border-left-color: var(--amber);">Backfill scan could not fetch any historical candles (Binance and Coinbase both failed).</div>
 {% endif %}
-
-<h2 class="section">Current Candle — What's Matching, What's Missing</h2>
-{{ m.data_table(["Condition","Actual","Required","Status"], breakdown) }}
-<div class="caption">Current candle closed at {{ last_time_str }}.</div>
-
-<h2 class="section">Last {{ last_n_count }} Candle Signal Check</h2>
-{{ m.data_table(["Time","Open","High","Low","Close","Pattern","Predicted Next","Next Close (actual)","Result","Reason"], last_n_rows) }}
 
 {% endif %}

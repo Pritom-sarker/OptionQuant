@@ -280,6 +280,19 @@ form.settings-form {
 .field.checkbox { flex-direction: row; align-items: center; gap: 8px; }
 .form-actions { grid-column: 1 / -1; margin-top: 6px; }
 
+.pattern-block {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.pattern-toggle { grid-column: 1 / -1; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.pattern-toggle label strong { color: var(--text); font-size: 14px; }
+
 button, input[type="submit"] {
   background: var(--blue);
   color: white;
