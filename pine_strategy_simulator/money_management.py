@@ -128,6 +128,9 @@ def run_simulation(df: pd.DataFrame, priority_order: list[str], filters_per_stra
     wins = losses = neutrals = 0
     trade_rows = []
     curve_balance, curve_basket, curve_trade_amt, curve_drawdown = [], [], [], []
+    bankrupt = False
+    bankrupt_trade_num = None
+    bankrupt_time = None
 
     for pos in range(n - 1):   # last row has no N+1 to score against
         i = df.index[pos]
@@ -228,6 +231,16 @@ def run_simulation(df: pd.DataFrame, priority_order: list[str], filters_per_stra
         curve_trade_amt.append(trade_amount)
         curve_drawdown.append(drawdown_pct)
 
+        # 100%+ drawdown = balance has hit zero or gone negative — the account
+        # is wiped out and cannot fund another trade. Stop simulating further
+        # trades here (continuing would be fiction: there is no money left to
+        # risk) and flag it clearly for the summary/warnings.
+        if balance <= 0:
+            bankrupt = True
+            bankrupt_trade_num = base_row["trade_num"]
+            bankrupt_time = int(result_time)
+            break
+
     trade_log = pd.DataFrame(trade_rows)
     total_trades = wins + losses + neutrals
     resolved = wins + losses
@@ -256,12 +269,54 @@ def run_simulation(df: pd.DataFrame, priority_order: list[str], filters_per_stra
         "total_recovered_amount": recovered_profit, "total_realized_profit": realized_profit,
         "max_drawdown_pct": max_drawdown_pct,
         "best_strategy": best_strategy, "worst_strategy": worst_strategy,
+        "bankrupt": bankrupt, "bankrupt_trade_num": bankrupt_trade_num, "bankrupt_time": bankrupt_time,
     }
 
     curves = {"balance": curve_balance, "loss_basket": curve_basket,
               "trade_amount": curve_trade_amt, "drawdown": curve_drawdown}
 
     return {"summary": summary, "trade_log": trade_log, "strategy_breakdown": strategy_breakdown, "curves": curves}
+
+
+# ─── Time-bucketed breakdowns (weekly trade count / balance, monthly balance) ─
+
+def _period_label(period, freq: str) -> str:
+    start = period.start_time
+    if freq == "W":
+        week_of_month = (start.day - 1) // 7 + 1
+        return f"{start.strftime('%b')} W{week_of_month}"
+    return start.strftime("%b %Y")
+
+
+def time_bucketed_breakdown(trade_log: pd.DataFrame, starting_balance: float, freq: str) -> pd.DataFrame:
+    """
+    freq="W" -> weekly (trade count + ending balance per week, labeled "Sep W1", "Sep W2", ...).
+    freq="M" -> monthly (ending balance per month, labeled "Sep 2026").
+    Periods with no trades still appear, with trade_count=0 and the balance
+    carried forward from the last period that had one (so the chart/table
+    reads as a continuous account timeline, not just the weeks with activity).
+    """
+    empty = pd.DataFrame(columns=["period", "label", "trade_count", "ending_balance"])
+    if trade_log.empty:
+        return empty
+
+    df = trade_log.copy()
+    df["dt"] = pd.to_datetime(df["result_time"], unit="s")
+    df["period"] = df["dt"].dt.to_period(freq)
+
+    grouped = df.groupby("period").agg(
+        trade_count=("trade_num", "count"), ending_balance=("balance_after", "last")
+    )
+
+    full_range = pd.period_range(grouped.index.min(), grouped.index.max(), freq=freq)
+    grouped = grouped.reindex(full_range)
+    grouped["trade_count"] = grouped["trade_count"].fillna(0).astype(int)
+    grouped["ending_balance"] = grouped["ending_balance"].ffill()
+    grouped["ending_balance"] = grouped["ending_balance"].fillna(starting_balance)
+
+    grouped = grouped.reset_index().rename(columns={"index": "period"})
+    grouped["label"] = grouped["period"].apply(lambda p: _period_label(p, freq))
+    return grouped[["period", "label", "trade_count", "ending_balance"]]
 
 
 def _strategy_breakdown(trade_log: pd.DataFrame, priority_order: list[str]) -> pd.DataFrame:

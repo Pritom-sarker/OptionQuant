@@ -383,6 +383,21 @@ def _line_chart(values, title, ylabel, color="#3778c2", zero_line=False):
     return fig
 
 
+def _period_line_chart(labels, values, title, ylabel, color="#3778c2", starting_balance=None):
+    fig, ax = plt.subplots(figsize=(12, 4.5), dpi=100)
+    ax.plot(range(len(values)), values, color=color, linewidth=1.5, marker="o", markersize=3)
+    if starting_balance is not None:
+        ax.axhline(starting_balance, color="#888888", linestyle="--", linewidth=1, label="Starting balance")
+        ax.legend(fontsize=8)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.grid(True, color="#dddddd", linewidth=0.6)
+    fig.tight_layout()
+    return fig
+
+
 def _render_money_management_tab():
     st.caption("Replays every historical signal from oldest to newest candle with a dynamic loss-basket "
                "recovery model. This is not martingale — sizing only adds a small percentage of the "
@@ -510,6 +525,18 @@ def _render_money_management_results(result: dict):
     meta = result["meta"]
 
     st.divider()
+
+    if summary["bankrupt"]:
+        st.error(
+            f"**ACCOUNT WIPED OUT — 100%+ drawdown.** Balance reached "
+            f"${summary['ending_balance']:.2f} (<= $0) on trade #{summary['bankrupt_trade_num']} "
+            f"({time.strftime('%Y-%m-%d %H:%M', time.localtime(summary['bankrupt_time']))}). There is no "
+            f"money left to fund another trade, so the simulation stopped here — everything below reflects "
+            f"only the trades that happened before this point. This setup is not viable at this starting "
+            f"balance/sizing; reduce the base trade amount, lower the max trade cap, or raise starting "
+            f"balance and re-run."
+        )
+
     st.subheader("Risk Warnings")
     warned = False
     if summary["max_consecutive_losses"] >= 5:
@@ -626,3 +653,38 @@ def _render_money_management_results(result: dict):
             st.pyplot(_bar_chart(strategy_breakdown["strategy"], strategy_breakdown["net_pnl"],
                                   "6. Strategy PnL Comparison", "Net PnL ($)"))
             plt.close("all")
+
+    st.divider()
+    st.subheader("Time-Based Analysis")
+    weekly = mm.time_bucketed_breakdown(trade_log, summary["starting_balance"], "W")
+    monthly = mm.time_bucketed_breakdown(trade_log, summary["starting_balance"], "M")
+
+    if weekly.empty:
+        st.info("No trades to break down by week/month.")
+    else:
+        st.caption(f"Whole test period spans {len(weekly)} week(s) across {len(monthly)} month(s), from "
+                   f"{weekly['label'].iloc[0]} to {weekly['label'].iloc[-1]}.")
+
+        wc1, wc2 = st.columns(2)
+        with wc1:
+            st.pyplot(_bar_chart(weekly["label"], weekly["trade_count"],
+                                  "Trades Per Week", "Trade Count"))
+            plt.close("all")
+        with wc2:
+            st.pyplot(_period_line_chart(weekly["label"], weekly["ending_balance"],
+                                          "Balance Per Week", "Balance ($)",
+                                          starting_balance=summary["starting_balance"]))
+            plt.close("all")
+
+        st.markdown("**Monthly Balance**")
+        st.pyplot(_period_line_chart(monthly["label"], monthly["ending_balance"],
+                                      "Balance At End Of Each Month", "Balance ($)",
+                                      color="#00aa44", starting_balance=summary["starting_balance"]))
+        plt.close("all")
+
+        monthly_table = monthly.rename(columns={
+            "label": "Month", "trade_count": "Trades", "ending_balance": "Balance At Month End",
+        })[["Month", "Trades", "Balance At Month End"]].round(2)
+        st.dataframe(monthly_table, width="stretch")
+        st.download_button("Download monthly_balance.csv", monthly_table.to_csv(index=False),
+                            file_name="money_management_monthly_balance.csv", mime="text/csv")

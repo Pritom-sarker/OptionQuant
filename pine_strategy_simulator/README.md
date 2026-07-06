@@ -263,6 +263,25 @@ run.
   than one is selected), plus 6 charts: balance curve, loss basket curve,
   trade amount curve, drawdown curve, win/loss distribution, and strategy
   PnL comparison.
+- **Time-Based Analysis**: trades-per-week bar chart and a balance-per-week
+  line chart, both labeled by week-of-month ("Sep W1", "Sep W2", ...), plus a
+  balance-at-end-of-month line chart and matching table (downloadable as
+  `money_management_monthly_balance.csv`) so you can see exactly what the
+  account was worth at the close of each calendar month across the whole
+  test period.
+
+### 100%+ drawdown = bankruptcy
+
+If the account balance ever reaches zero or goes negative — a 100%+
+drawdown from any peak — there is no money left to fund another trade. The
+simulator detects this exactly, **stops the simulation at that trade** (it
+does not keep "trading" a wiped-out account), and shows a prominent red
+banner naming the exact trade number and date it happened. Every table,
+chart, and CSV for that run only reflects trades up to that point. If you
+see this banner, the setup (starting balance vs. base trade amount vs. max
+trade cap) is not survivable as configured — the fix is to lower the base
+trade amount / max trade cap or raise the starting balance, not to just
+scroll past the warning.
 
 ## Project layout
 
