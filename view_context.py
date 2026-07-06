@@ -37,7 +37,12 @@ def build_tab1_context() -> dict:
     last = df.iloc[-1]
     stats = computed["stats"]
     min_needed = max(settings["atr_length"], settings["atr_sma_length"]) + settings["atr_length"]
-    enabled_patterns = [name for name in config.PATTERN_OPTIONS if settings["patterns"].get(name, {}).get("enabled")]
+    # Sourced from computed["enabled_pattern_names"] (the same background tick that
+    # produced the breakdown tables below) rather than the live current settings —
+    # settings apply instantly on save, but tab1_computed only refreshes once per
+    # ~15s tick, so reading live settings here could show a pattern set that
+    # disagrees with what the tables actually reflect for up to that long.
+    enabled_patterns = computed.get("enabled_pattern_names", [])
     enabled_patterns_label = " + ".join(enabled_patterns) if enabled_patterns else "None enabled"
 
     breakdown_groups = [

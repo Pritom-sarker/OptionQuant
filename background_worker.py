@@ -116,6 +116,7 @@ def _tick_tab1() -> None:
         state.tab1_computed = {
             "pat_dir": combined_dir, "act_ok": combined_act_ok, "results": results,
             "stats": stats, "breakdown": breakdown, "last_n_rows": rows,
+            "enabled_pattern_names": list(per_pattern.keys()),
             "last_refreshed": time.time(),
         }
 
