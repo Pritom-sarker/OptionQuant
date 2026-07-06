@@ -58,6 +58,7 @@ def _update_live_prediction(df, per_pattern, combined_dir, combined_mode, combin
         return ap
 
     n = len(df)
+    just_resolved = False
     if ap is not None and ap.get("result") == "PENDING":
         matches = df.index[df["time"] == ap["time"]]
         if len(matches):
@@ -65,10 +66,21 @@ def _update_live_prediction(df, per_pattern, combined_dir, combined_mode, combin
             if pos + 1 < n:
                 ap = se.build_signal_table(df, per_pattern, combined_dir, combined_mode,
                                             combined_act_ok, last_n=n - pos)[0]
+                just_resolved = True
 
     if bool(combined_act_ok.iloc[-1]) and (ap is None or ap["time"] != latest_time):
         ap = se.build_signal_table(df, per_pattern, combined_dir, combined_mode,
                                     combined_act_ok, last_n=1)[0]
+    elif not just_resolved and ap is not None and ap["time"] != latest_time and ap.get("result") != "PENDING":
+        # The old signal already resolved to WIN/LOSS on a *previous* tick
+        # (just_resolved is only true the one tick it happens) and the
+        # current candle has no active signal of its own — there is no
+        # "current" prediction anymore. Without this, ap would keep holding
+        # that old GREEN/RED forever, and Tab 3's engine would keep
+        # re-creating a brand new candidate from it every time a trade
+        # finished (since candidate/trade reset to None but this stale
+        # signal never did).
+        ap = None
 
     with state.lock:
         state.live_active_prediction = ap
