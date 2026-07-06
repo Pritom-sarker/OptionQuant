@@ -12,6 +12,7 @@ model). See routes/pages.py, routes/api.py, routes/charts.py and
 background_worker.py.
 """
 from __future__ import annotations
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -25,6 +26,13 @@ from routes import pages, api, charts
 # happens to be at startup (can differ from the repo root depending on how
 # the host/platform launches uvicorn) — this is what actually serves CSS/JS.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Root logger stays at WARNING (avoids noisy third-party INFO/DEBUG spam from
+# requests/urllib3/uvicorn); background_worker's own logger is raised to INFO
+# so every signal/candidate/trade lifecycle event it logs is actually visible
+# in the console/Railway logs instead of being silently dropped.
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+logging.getLogger("background_worker").setLevel(logging.INFO)
 
 
 @asynccontextmanager

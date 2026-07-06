@@ -201,8 +201,15 @@ def _save_tab3_charts(candidate, trade) -> None:
     cand_snaps = candidate.snapshot_history if candidate is not None else []
     trade_snaps = trade.snapshot_history if trade is not None else []
 
-    candles = btcapi.fetch_btcusd_candles(config.NUM_CANDLES_TARGET)
-    candle_df = se.candles_to_df(candles) if candles else None
+    # Reuse Tab 1's own candle series (state.tab1_df) instead of an
+    # independent fresh fetch here — two separate Binance calls, even
+    # seconds apart, can drift slightly, which used to let the signal-candle
+    # marker land on a different candle than the one that actually generated
+    # the signal, making a genuine trade look "disconnected" from any signal
+    # on the chart. Reusing the exact df the signal was computed from
+    # guarantees the marker always matches the real decision.
+    with state.lock:
+        candle_df = state.tab1_df
 
     if candidate is not None:
         candle_path = os.path.join(config.TAB3_CHART_DIR, f"candidate_{candidate.db_id}_candle.png")
@@ -293,34 +300,62 @@ def _tick_tab3() -> None:
     tab1_prediction = state.tab1_prediction
     predicted_label = tab1_prediction.get("predicted_next", "UNKNOWN") if tab1_prediction else "UNKNOWN"
 
+    # signal_time always comes straight from Tab 1's own candle row (never a
+    # cached/derived value here) — this is what guarantees a candidate can
+    # only ever be created for the exact candle a signal actually fired on,
+    # never a stale carry-over from a previous tick.
     if (predicted_label in ("GREEN", "RED") and tab1_prediction is not None
             and trade is None and market is not None):
         signal_time = int(tab1_prediction["time"])
-        if candidate is None or candidate.signal_time != signal_time or candidate.prediction != predicted_label:
+        is_fresh_signal = (candidate is None or candidate.signal_time != signal_time
+                            or candidate.prediction != predicted_label)
+        if is_fresh_signal:
             if candidate is not None and candidate.status == "OBSERVING":
+                log.info("[Tab3] Superseding candidate candle=%s (%s) — new signal candle=%s (%s) %s",
+                          candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)),
+                          signal_time, time.strftime("%H:%M:%S", time.localtime(signal_time)), predicted_label)
                 trade_engine.supersede_candidate(candidate)
+            log.info("[Tab3] NEW SIGNAL candle=%s (%s) direction=%s reason=%r -> creating candidate",
+                      signal_time, time.strftime("%H:%M:%S", time.localtime(signal_time)),
+                      predicted_label, tab1_prediction.get("reason", ""))
             candidate = trade_engine.create_candidate(tab1_prediction, market)
             yes_id, no_id = candidate.yes_token_id, candidate.no_token_id
             yes_book = orderbook_api.fetch_order_book(yes_id)
             no_book = orderbook_api.fetch_order_book(no_id)
+    elif candidate is None and trade is None:
+        log.debug("[Tab3] No valid signal this tick (predicted_label=%s) — trade skipped.", predicted_label)
 
     if trade is None and candidate is not None and candidate.status == "OBSERVING":
         if candidate.is_expired():
+            log.info("[Tab3] Candidate candle=%s (%s) EXPIRED with no entry — "
+                      "No valid signal converted to a trade — trade skipped.",
+                      candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)))
             trade_engine.expire_candidate(candidate)
             candidate = None
         else:
             snap = trade_engine.record_candidate_snapshot(candidate, yes_book, no_book, settings)
             if snap["decision"] == "BUY":
                 trade = trade_engine.enter_trade(candidate, snap, settings)
+                log.info("[Tab3] TRADE OPENED candle=%s (%s) side=%s mode=%s entry_price=%.3f reason=%r",
+                          candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)),
+                          trade.selected_side, trade.entry_mode, trade.entry_price, trade.entry_reason)
+            else:
+                log.debug("[Tab3] Candidate candle=%s still OBSERVING — decision=%s mode=%s price=%.3f reason=%r",
+                           candidate.signal_time, snap["decision"], snap["mode"], snap["selected_price"], snap["reason"])
 
     if trade is not None and trade.status == "OPEN":
         trade_engine.record_trade_snapshot(trade, yes_book, no_book)
         should_exit, exit_reason = trade_engine.check_early_exit(trade, settings)
         if should_exit:
+            log.info("[Tab3] TRADE EARLY EXIT candle=%s entry_price=%.3f reason=%r",
+                      trade.entry_time, trade.entry_price, exit_reason)
             trade_engine.settle_early_exit(trade, exit_reason)
         elif time.time() >= trade.expiry_time:
             window_candle = _find_window_candle(trade.market_slug)
-            trade_engine.settle_at_expiry(trade, window_candle)
+            settled = trade_engine.settle_at_expiry(trade, window_candle)
+            if settled is not None:
+                log.info("[Tab3] TRADE SETTLED signal_candle=%s entry_price=%.3f exit_price=%.3f result=%s",
+                          trade.entry_time, trade.entry_price, trade.exit_price, trade.final_result)
 
     # Chart images are comparatively expensive (candle fetch + matplotlib +
     # disk I/O) — regenerate them on their own slower cadence. Values
