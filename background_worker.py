@@ -98,16 +98,14 @@ def _tick_tab1() -> None:
     active_row = _update_live_prediction(df, per_pattern, combined_dir, combined_mode, combined_act_ok)
     stats = se.compute_full_stats(df, combined_dir, combined_act_ok, results, settings["min_signals"])
 
-    breakdown = []
-    for name, p in per_pattern.items():
-        pattern_rows = se.build_condition_breakdown(df, p["pat_dir"], name, settings["atr_mult"],
-                                                      p["enabled_filters"], idx=-1)
-        for r in pattern_rows:
-            r["condition"] = f"[{name}] {r['condition']}"
-        breakdown.extend(pattern_rows)
-    if not breakdown:
-        breakdown = [{"condition": "No base pattern enabled", "actual": "—",
-                      "required": "enable at least one base pattern in Settings", "status": "OFF"}]
+    # One breakdown table per *enabled* pattern (not merged into one) — each
+    # pattern is evaluated fully independently, so each gets its own visible
+    # condition/actual/required/status table for direct comparison.
+    breakdown = [
+        {"pattern": name, "rows": se.build_condition_breakdown(
+            df, p["pat_dir"], name, settings["atr_mult"], p["enabled_filters"], idx=-1)}
+        for name, p in per_pattern.items()
+    ]
 
     rows = se.build_signal_table(df, per_pattern, combined_dir, combined_mode, combined_act_ok,
                                   config.LAST_N_CANDLES_TABLE)

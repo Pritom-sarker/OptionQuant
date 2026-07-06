@@ -7,4 +7,4 @@ numpy>=1.24
 requests>=2.31
 matplotlib>=3.8
 plotly>=5.20
-kaleido>=0.2.1
+kaleido==0.2.1

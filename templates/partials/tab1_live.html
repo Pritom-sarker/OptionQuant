@@ -66,7 +66,14 @@
 </div>
 
 <h2 class="section">Current Candle — What's Matching, What's Missing</h2>
-{{ m.data_table(["Condition","Actual","Required","Status"], breakdown) }}
+{% if breakdown_groups %}
+{% for g in breakdown_groups %}
+<h3 class="subsection">{{ g.pattern }}</h3>
+{{ m.data_table(["Condition","Actual","Required","Status"], g.rows) }}
+{% endfor %}
+{% else %}
+<div class="callout" style="border-left-color: var(--amber);">No base pattern enabled — enable at least one in Settings.</div>
+{% endif %}
 <div class="caption">Current candle closed at {{ last_time_str }}.</div>
 
 <h2 class="section">Last {{ last_n_count }} Candle Signal Check</h2>

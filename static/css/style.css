@@ -103,6 +103,13 @@ h2.section {
 
 hr.divider { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
 
+h3.subsection {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 18px 0 8px;
+  color: var(--text-dim);
+}
+
 /* ── Metric cards ───────────────────────────────────────────────────────── */
 .metric-grid {
   display: grid;

@@ -40,8 +40,13 @@ def build_tab1_context() -> dict:
     enabled_patterns = [name for name in config.PATTERN_OPTIONS if settings["patterns"].get(name, {}).get("enabled")]
     enabled_patterns_label = " + ".join(enabled_patterns) if enabled_patterns else "None enabled"
 
-    breakdown = [{"Condition": b["condition"], "Actual": b["actual"], "Required": b["required"],
-                  "Status": b["status"]} for b in computed["breakdown"]]
+    breakdown_groups = [
+        {"pattern": g["pattern"], "rows": [
+            {"Condition": b["condition"], "Actual": b["actual"], "Required": b["required"], "Status": b["status"]}
+            for b in g["rows"]
+        ]}
+        for g in computed["breakdown"]
+    ]
 
     last_n_rows = [{
         "Time": time.strftime("%H:%M:%S", time.localtime(r["time"])),
@@ -79,7 +84,7 @@ def build_tab1_context() -> dict:
         "last_time_str": time.strftime("%H:%M:%S", time.localtime(last["time"])),
         "last_refresh_str": time.strftime("%H:%M:%S", time.localtime(computed["last_refreshed"])),
         "candles_count": len(df), "min_needed": min_needed,
-        "breakdown": breakdown, "last_n_rows": last_n_rows, "last_n_count": config.LAST_N_CANDLES_TABLE,
+        "breakdown_groups": breakdown_groups, "last_n_rows": last_n_rows, "last_n_count": config.LAST_N_CANDLES_TABLE,
         "backfill": backfill,
     }
 
