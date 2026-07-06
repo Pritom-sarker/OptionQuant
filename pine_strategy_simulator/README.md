@@ -1,11 +1,20 @@
 # Pine Strategy Simulator
 
 A standalone Streamlit backtesting dashboard for `btc_polymarket_signal_tester.pine`.
-Selecting a pair, timeframe, and candle count automatically runs **every**
-combination of base pattern x ATR multiplier x filter toggle (768 setups) —
-there's no "pick one strategy" mode. This is a separate project from the
-main OptionQuant app — it doesn't import or modify anything in the parent
-directory.
+Three tabs:
+
+1. **All Results** — selecting a pair, timeframe, and candle count
+   automatically runs **every** combination of base pattern x ATR multiplier
+   x filter toggle (768 setups) — there's no "pick one strategy" mode.
+2. **Filtered Results** — narrows that same 768-setup sweep down to the ones
+   that clear your minimum win rate / signal frequency / trade count, without
+   re-running anything.
+3. **Money Management Simulator** — replays historical signals from a
+   strategy combination *you* pick, candle by candle, oldest to newest,
+   through a real account-balance + loss-basket recovery model.
+
+This is a separate project from the main OptionQuant app — it doesn't
+import or modify anything in the parent directory.
 
 ## Install
 
@@ -146,6 +155,114 @@ multiplier is — and are fixed at the Pine script's own defaults
   combinations are done, saving, ready) — every row in the result table
   comes from real candle-by-candle backtesting over the exact data shown in
   the success banner above the table, nothing is fabricated or simulated.
+- **Filtered Results tab**: three controls (Min Win Rate %, Min Signal
+  Frequency %, optional Min Total Signals) filter the *same* 768-row sweep
+  already computed in "All Results" — moving these sliders never re-runs the
+  backtest. Shows a narrower results table, 5 summary cards (setups found,
+  best filtered setup, highest win rate, highest signal frequency, lowest
+  max consecutive losses), and 4 charts scoped to just the filtered setups.
+
+## Money Management Simulator
+
+This tab is independent of the sidebar's pair/timeframe/candle count — it
+has its own Pair/Timeframe/Candle Count pickers plus its own strategy,
+filter, ATR, and money-management inputs, all gathered above a single
+**Run Simulation** button. Nothing runs until you click it, and re-clicking
+with the exact same settings reuses the cached result instantly.
+
+**Strategy selection & priority**: pick any combination of the 4 base
+patterns (multi-select), then a second "Priority Order" box where re-clicking
+strategies sets the order. Each selected strategy gets its own independent
+F1-F5 filter checkboxes. If more than one selected strategy fires a signal on
+the same candle, the **first one in priority order wins** — only one trade
+ever starts per candle, regardless of how many strategies technically agree.
+
+**Scoring**: identical rule to the main sweep — a signal on candle N is
+scored strictly against candle N+1's own open vs close (never candle N,
+never an unfinished candle); `close[N+1] == open[N+1]` is NEUTRAL and never
+touches the balance or loss basket.
+
+### How the loss basket works
+
+The loss basket is a **theoretical recovery tracker**, not real money by
+itself — it exists only to size the *next* trade slightly larger after a
+loss, so that a win has a chance to claw back part of what was lost. It is
+never used to decide whether a signal fires; it only affects how much is
+risked on the next trade that does fire.
+
+- **On a loss**: the full trade amount is added to the loss basket, and the
+  same amount is subtracted from the real account balance. Nothing is
+  "recovered" yet — the loss basket just remembers how much is owed.
+- **On a win**: the full trade amount is credited back to the real balance
+  (a genuine win is a genuine win), but the win is then *split* on paper —
+  your chosen "Win Split %" of it reduces the loss basket, and the rest
+  becomes realized profit. The loss basket can never go below zero.
+- **Sizing the next trade**: `trade_amount = min(base_trade_amount +
+  loss_basket * recovery_percent, max_trade_amount)`. This is deliberately
+  **not martingale** — a loss never doubles the next trade. The recovery
+  add-on is only a small percentage of the *outstanding* loss basket, so it
+  grows gently as losses accumulate and shrinks as wins pay it down, always
+  clamped by the max trade amount cap.
+- **Dynamic recovery mode** (optional): instead of one fixed recovery
+  percentage, the percentage itself shrinks as the loss basket grows — 25%
+  while the basket is small (<= 5x base trade), stepping down to 15%, 10%,
+  and finally 5% once the basket exceeds 20x the base trade. This keeps
+  position sizing from creeping up indefinitely during a long losing streak.
+- **Reset modes**: "Never reset" and "reset when loss basket becomes 0" are
+  mathematically identical here, since the basket is already floored at zero
+  by the win formula above — neither forces anything extra. "Reset after X
+  winning trades" is the one genuinely different mode: it forcibly zeroes the
+  loss basket after N cumulative wins even if it hasn't organically paid
+  itself down yet, as a deliberate "fresh start" mechanism.
+
+### Account balance vs. the loss basket — these are not the same number
+
+- **Account balance** is the real, true result of every trade — it only
+  ever changes by the *full* trade amount won or lost. This is the number
+  that answers "did this strategy actually make money."
+- **Loss basket** is a side ledger used only for sizing decisions. It is not
+  money that's missing from the balance, and it's not profit sitting
+  somewhere — it's purely a bookkeeping signal that says "trades have been
+  losing lately, size the next one up a little to help catch up."
+- **Realized profit** and **recovered amount** are a further split of every
+  *win's* gross amount on paper (not the balance) — realized profit is the
+  portion that "counts" as pure profit; recovered amount is the portion
+  credited toward paying down the loss basket. Neither of these two numbers
+  alone equals the account balance change; only summing all trades' actual
+  win/loss amounts (i.e. the balance curve) gives the true account result.
+
+### Why the max trade amount cap matters
+
+Without a hard cap, a sufficiently long losing streak would keep growing the
+loss basket, which would keep growing the recovery add-on, which would keep
+growing the next trade size — exactly the runaway sizing spiral that makes
+martingale-style systems blow up an account on a bad streak. The max trade
+amount cap puts a hard ceiling on this: no matter how large the loss basket
+gets, the size of any single trade can never exceed the cap. The dashboard
+warns you if the cap is set to more than 10x the base trade amount (before
+running), and again after running if the actual max trade amount *used*
+grew to 5x+ the base trade amount, if max consecutive losses hit 5+, or if
+the loss basket is still large relative to the base trade at the end of the
+run.
+
+### Outputs
+
+- `results/money_management_summary.csv` — the one-row run summary (Pair,
+  Timeframe, Candle Count, Selected Strategies, Selected Filters, ATR
+  Multiplier, Starting/Ending Balance, Net PnL, ROI %, Total Trades, Wins,
+  Losses, Neutrals, Win Rate, Max Consecutive Losses, Biggest/Final Loss
+  Basket, Max Trade Amount Used, Average Trade Amount).
+- `results/money_management_trade_log.csv` — every individual trade (Trade #,
+  Signal Time, Result Candle Time, Strategy Triggered, Signal
+  Direction/Close, Result Candle Open/Close, Result, Base Trade Amount,
+  Recovery Addon, Final Trade Amount, Balance Before/After, PnL, Loss Basket
+  Before/After, Recovery Percent Used, Recovered Amount, Realized Profit
+  Added).
+- A Strategy Breakdown table (trades/wins/losses/neutrals/win rate/net
+  PnL/average trade amount/max consecutive losses per strategy, when more
+  than one is selected), plus 6 charts: balance curve, loss basket curve,
+  trade amount curve, drawdown curve, win/loss distribution, and strategy
+  PnL comparison.
 
 ## Project layout
 
@@ -157,7 +274,8 @@ pine_strategy_simulator/
   pine_logic.py       exact Pine indicator/pattern/filter port
   backtester.py       signal extraction (corrected scoring rule) + single-dataset sweep runner
   metrics.py          per-setup stats + ranking-table aggregation
-  dashboard.py        Streamlit UI
+  money_management.py priority-based multi-strategy combination + sequential balance/loss-basket simulation
+  dashboard.py        Streamlit UI (All Results / Filtered Results / Money Management Simulator tabs)
   requirements.txt
   data/               cached candle CSVs (created on first fetch)
   results/            sweep output CSVs (created on first sweep run)

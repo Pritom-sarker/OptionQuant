@@ -20,6 +20,7 @@ import data_fetcher
 import pine_logic
 import backtester
 import metrics
+import money_management as mm
 
 GREEN = "#00aa44"
 RED = "#dd2222"
@@ -199,7 +200,7 @@ def render():
                f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(df['time'].iloc[-1]))}. "
                f"{len(summary_df)} setups tested, {len(trades_df):,} total resolved+neutral signals.")
 
-    tab1, tab2 = st.tabs(["All Results", "Filtered Results"])
+    tab1, tab2, tab3 = st.tabs(["All Results", "Filtered Results", "Money Management Simulator"])
 
     with tab1:
         st.download_button("Download full summary CSV", summary_df.to_csv(index=False),
@@ -280,6 +281,9 @@ def render():
 
     with tab2:
         _render_filtered_tab(summary_df, total_candles)
+
+    with tab3:
+        _render_money_management_tab()
 
 
 _FILTERED_COLUMN_ORDER = [
@@ -362,3 +366,263 @@ def _render_filtered_tab(summary_df: pd.DataFrame, total_candles: int):
     st.pyplot(_histogram(filtered["max_consecutive_losses"].tolist(),
                           "4. Filtered Max Consecutive Losses (distribution)", "Max Consecutive Losses"))
     plt.close("all")
+
+
+# ─── Money Management Simulator tab ──────────────────────────────────────────
+
+def _line_chart(values, title, ylabel, color="#3778c2", zero_line=False):
+    fig, ax = plt.subplots(figsize=(11, 4), dpi=100)
+    ax.plot(range(1, len(values) + 1), values, color=color, linewidth=1.3)
+    if zero_line:
+        ax.axhline(0, color="#888888", linestyle="--", linewidth=1)
+    ax.set_xlabel("Trade #")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.grid(True, color="#dddddd", linewidth=0.6)
+    fig.tight_layout()
+    return fig
+
+
+def _render_money_management_tab():
+    st.caption("Replays every historical signal from oldest to newest candle with a dynamic loss-basket "
+               "recovery model. This is not martingale — sizing only adds a small percentage of the "
+               "*outstanding* loss basket to the base trade amount, always capped at the max trade amount.")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        mm_pair = st.selectbox("Pair", config.PAIRS, key="mm_pair")
+    with c2:
+        mm_timeframe = st.selectbox("Timeframe", config.TIMEFRAMES, key="mm_timeframe")
+    with c3:
+        mm_candle_count = st.selectbox("Candle Count", config.CANDLE_COUNT_OPTIONS,
+                                        index=config.CANDLE_COUNT_OPTIONS.index(config.DEFAULT_CANDLE_COUNT),
+                                        key="mm_candle_count")
+
+    selected_strategies = st.multiselect("Strategies (multi-select)", config.STRATEGIES,
+                                          default=[config.STRATEGIES[0]], key="mm_strategies")
+    if not selected_strategies:
+        st.warning("Select at least one strategy to run a simulation.")
+        return
+
+    priority_order = st.multiselect(
+        "Priority Order — first = highest priority. If more than one selected strategy fires on the same "
+        "candle, the first one here wins (only one trade per candle). Re-click strategies below in your "
+        "preferred order to change it.",
+        selected_strategies, default=selected_strategies, key="mm_priority")
+    if set(priority_order) != set(selected_strategies):
+        st.warning("Priority order must include every selected strategy exactly once — add any missing ones below.")
+        return
+
+    st.markdown("**Filters per strategy** (chosen independently for each strategy)")
+    filters_per_strategy = {}
+    filter_cols = st.columns(len(priority_order))
+    for col, name in zip(filter_cols, priority_order):
+        with col:
+            st.markdown(f"*{name}*")
+            filters_per_strategy[name] = {
+                "f1": st.checkbox("F1 Trend", value=True, key=f"mm_f1_{name}"),
+                "f2": st.checkbox("F2 Volatility", value=True, key=f"mm_f2_{name}"),
+                "f3": st.checkbox("F3 Close Location", value=False, key=f"mm_f3_{name}"),
+                "f4": st.checkbox("F4 Continuation", value=False, key=f"mm_f4_{name}"),
+                "f5": st.checkbox("F5 Anti-Chop", value=True, key=f"mm_f5_{name}"),
+            }
+
+    atr_mult = st.selectbox("ATR Multiplier", config.ATR_MULTIPLIERS,
+                             index=config.ATR_MULTIPLIERS.index(1.5), key="mm_atr")
+
+    st.markdown("**Money Management Settings**")
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    with mc1:
+        starting_balance = st.number_input("Starting Balance ($)", min_value=1.0, value=1000.0,
+                                            step=10.0, key="mm_start_bal")
+        base_trade_amount = st.number_input("Base Trade Amount ($)", min_value=0.01, value=1.0,
+                                             step=0.1, key="mm_base_trade")
+    with mc2:
+        dynamic_mode = st.checkbox("Dynamic recovery % (overrides fixed % below)", value=False, key="mm_dynamic")
+        recovery_percent_pct = st.selectbox("Fixed Recovery % (used when dynamic is off)", [5, 10, 15, 25],
+                                             index=1, key="mm_recovery_pct")
+    with mc3:
+        profit_split_pct = st.slider("Win Split -> Loss Basket Recovery (%)", 0, 100, 50, key="mm_split")
+        max_trade_amount = st.number_input("Max Trade Amount Cap ($)", min_value=base_trade_amount,
+                                            value=max(10.0, base_trade_amount * 10), step=1.0, key="mm_max_trade")
+    with mc4:
+        reset_label = st.selectbox("Loss Basket Reset", ["Never reset", "Reset when loss basket becomes 0",
+                                                           "Reset after X winning trades"], key="mm_reset_mode")
+        reset_after_n_wins = 0
+        if reset_label == "Reset after X winning trades":
+            reset_after_n_wins = st.number_input("Reset after N wins", min_value=1, value=5, step=1, key="mm_reset_n")
+
+    reset_mode = {"Never reset": "never", "Reset when loss basket becomes 0": "on_zero",
+                  "Reset after X winning trades": "after_n_wins"}[reset_label]
+
+    if dynamic_mode:
+        st.caption("Dynamic mode: recovery % = 25% while loss basket <= 5x base trade, 15% <= 10x, "
+                   "10% <= 20x, 5% beyond that — the fixed % above is ignored.")
+
+    if max_trade_amount > 10 * base_trade_amount:
+        st.warning(f"Max trade amount cap (${max_trade_amount:.2f}) is more than 10x your base trade amount "
+                   f"(${base_trade_amount:.2f}) — this allows large position sizing during a losing streak. "
+                   f"Make sure this is intentional before running.")
+
+    run_clicked = st.button("Run Simulation", type="primary", key="mm_run")
+
+    cache_key = (mm_pair, mm_timeframe, mm_candle_count, tuple(priority_order), atr_mult,
+                 tuple(sorted((k, tuple(sorted(v.items()))) for k, v in filters_per_strategy.items())),
+                 starting_balance, base_trade_amount, dynamic_mode, recovery_percent_pct,
+                 profit_split_pct, max_trade_amount, reset_mode, reset_after_n_wins)
+
+    st.session_state.setdefault("mm_cache", {})
+    if run_clicked:
+        with st.spinner(f"Loading {mm_pair} {mm_timeframe} and replaying up to {mm_candle_count:,} candles "
+                         f"oldest -> newest..."):
+            df, from_cache, _ = data_fetcher.load_candles(mm_pair, mm_timeframe, mm_candle_count)
+            if df.empty:
+                st.error("No local cache for this pair/timeframe and the Binance API call failed — "
+                         "check your internet connection and try again.")
+                return
+            df = pine_logic.compute_indicators(df)
+            money = {
+                "starting_balance": starting_balance, "base_trade_amount": base_trade_amount,
+                "max_trade_amount": max_trade_amount, "recovery_percent": recovery_percent_pct / 100.0,
+                "dynamic_mode": dynamic_mode, "profit_split_recovery_pct": profit_split_pct / 100.0,
+                "reset_mode": reset_mode, "reset_after_n_wins": reset_after_n_wins,
+            }
+            result = mm.run_simulation(df, priority_order, filters_per_strategy, atr_mult, money)
+            result["meta"] = {"pair": mm_pair, "timeframe": mm_timeframe, "candle_count": len(df),
+                               "priority_order": list(priority_order), "atr_mult": atr_mult,
+                               "base_trade_amount": base_trade_amount,
+                               "filters_per_strategy": dict(filters_per_strategy)}
+            st.session_state["mm_cache"][cache_key] = result
+
+    result = st.session_state["mm_cache"].get(cache_key)
+    if result is None:
+        st.info("Configure your settings above and click Run Simulation.")
+        return
+
+    _render_money_management_results(result)
+
+
+def _render_money_management_results(result: dict):
+    summary = result["summary"]
+    trade_log = result["trade_log"]
+    strategy_breakdown = result["strategy_breakdown"]
+    curves = result["curves"]
+    meta = result["meta"]
+
+    st.divider()
+    st.subheader("Risk Warnings")
+    warned = False
+    if summary["max_consecutive_losses"] >= 5:
+        st.warning(f"Max consecutive losses reached {summary['max_consecutive_losses']} — a long losing "
+                   f"streak occurred in this run.")
+        warned = True
+    if summary["final_loss_basket"] > 5 * meta.get("base_trade_amount", summary["average_trade_amount"] or 1):
+        st.warning(f"Final loss basket (${summary['final_loss_basket']:.2f}) is still large relative to the "
+                   f"base trade amount — recovery hasn't kept up with losses by the end of this run.")
+        warned = True
+    if summary["max_trade_amount_used"] >= 5 * (meta.get("base_trade_amount") or summary["average_trade_amount"] or 1):
+        st.warning(f"Max trade amount actually used (${summary['max_trade_amount_used']:.2f}) grew to 5x+ "
+                   f"the base trade amount during this run.")
+        warned = True
+    if not warned:
+        st.success("No risk thresholds triggered for this run.")
+
+    st.subheader("Summary")
+    filters_label = "; ".join(
+        f"{name}: {'+'.join(k.upper() for k, v in flags.items() if v) or 'None'}"
+        for name, flags in meta.get("filters_per_strategy", {}).items()
+    )
+    summary_row = {
+        "Pair": meta["pair"], "Timeframe": meta["timeframe"], "Candle Count": meta["candle_count"],
+        "Selected Strategies": " > ".join(meta["priority_order"]), "Selected Filters": filters_label,
+        "ATR Multiplier": meta["atr_mult"],
+        "Starting Balance": round(summary["starting_balance"], 2), "Ending Balance": round(summary["ending_balance"], 2),
+        "Net PnL": round(summary["net_pnl"], 2), "ROI %": round(summary["roi_pct"], 2),
+        "Total Trades": summary["total_trades"], "Wins": summary["wins"], "Losses": summary["losses"],
+        "Neutrals": summary["neutrals"], "Win Rate": round(summary["win_rate"], 2),
+        "Max Consecutive Losses": summary["max_consecutive_losses"],
+        "Biggest Loss Basket": round(summary["biggest_loss_basket"], 2),
+        "Final Loss Basket": round(summary["final_loss_basket"], 2),
+        "Max Trade Amount Used": round(summary["max_trade_amount_used"], 2),
+        "Average Trade Amount": round(summary["average_trade_amount"], 2),
+    }
+    summary_df_row = pd.DataFrame([summary_row])
+    st.dataframe(summary_df_row, width="stretch")
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("Ending Balance", f"${summary['ending_balance']:.2f}", f"{summary['net_pnl']:+.2f}")
+    m2.metric("ROI %", f"{summary['roi_pct']:.2f}%")
+    m3.metric("Win Rate", f"{summary['win_rate']:.1f}%")
+    m4.metric("Max Consec. Losses", summary["max_consecutive_losses"])
+    m5.metric("Final Loss Basket", f"${summary['final_loss_basket']:.2f}")
+    m6.metric("Max Drawdown", f"{summary['max_drawdown_pct']:.2f}%")
+
+    os.makedirs(config.RESULTS_DIR, exist_ok=True)
+    summary_df_row.to_csv(os.path.join(config.RESULTS_DIR, "money_management_summary.csv"), index=False)
+    trade_log.to_csv(os.path.join(config.RESULTS_DIR, "money_management_trade_log.csv"), index=False)
+
+    st.subheader("Trade Log")
+    tl = trade_log.copy()
+    if not tl.empty:
+        tl["signal_time"] = tl["signal_time"].apply(lambda t: time.strftime("%Y-%m-%d %H:%M", time.localtime(t)))
+        tl["result_time"] = tl["result_time"].apply(lambda t: time.strftime("%Y-%m-%d %H:%M", time.localtime(t)))
+        tl = tl.rename(columns={
+            "trade_num": "Trade #", "signal_time": "Signal Time", "result_time": "Result Candle Time",
+            "strategy": "Strategy Triggered", "direction": "Signal Direction", "signal_close": "Signal Candle Close",
+            "result_open": "Result Candle Open", "result_close": "Result Candle Close", "result": "Result",
+            "base_trade_amount": "Base Trade Amount", "recovery_addon": "Recovery Addon",
+            "trade_amount": "Final Trade Amount", "balance_before": "Balance Before", "balance_after": "Balance After",
+            "pnl": "PnL", "loss_basket_before": "Loss Basket Before", "loss_basket_after": "Loss Basket After",
+            "recovery_pct_used": "Recovery Percent Used", "recovered_amount": "Recovered Amount",
+            "realized_profit_added": "Realized Profit Added",
+        })
+    st.dataframe(tl, width="stretch", height=420)
+    st.download_button("Download money_management_trade_log.csv", trade_log.to_csv(index=False),
+                        file_name="money_management_trade_log.csv", mime="text/csv")
+    st.download_button("Download money_management_summary.csv", summary_df_row.to_csv(index=False),
+                        file_name="money_management_summary.csv", mime="text/csv")
+
+    st.subheader("Strategy Breakdown")
+    if strategy_breakdown.empty:
+        st.info("No trades to break down by strategy.")
+    else:
+        st.dataframe(strategy_breakdown.rename(columns={
+            "strategy": "Strategy", "trades": "Trades", "wins": "Wins", "losses": "Losses",
+            "neutrals": "Neutrals", "win_rate": "Win Rate", "net_pnl": "Net PnL",
+            "average_trade_amount": "Average Trade Amount", "max_consecutive_losses": "Max Consecutive Losses",
+        }).round(2), width="stretch")
+        st.caption(f"Best strategy in this run: **{summary['best_strategy']}** — "
+                   f"Worst: **{summary['worst_strategy']}**")
+
+    st.subheader("Charts")
+    if not curves["balance"]:
+        st.info("No trades were taken, so there are no curves to plot.")
+        return
+
+    ch1, ch2 = st.columns(2)
+    with ch1:
+        st.pyplot(_line_chart(curves["balance"], "1. Balance Curve", "Balance ($)"))
+        plt.close("all")
+    with ch2:
+        st.pyplot(_line_chart(curves["loss_basket"], "2. Loss Basket Curve", "Loss Basket ($)", color="#dd2222"))
+        plt.close("all")
+
+    ch3, ch4 = st.columns(2)
+    with ch3:
+        st.pyplot(_line_chart(curves["trade_amount"], "3. Trade Amount Curve", "Trade Amount ($)", color="#c9a227"))
+        plt.close("all")
+    with ch4:
+        st.pyplot(_line_chart(curves["drawdown"], "4. Drawdown Curve", "Drawdown %", color="#8844cc"))
+        plt.close("all")
+
+    ch5, ch6 = st.columns(2)
+    with ch5:
+        st.pyplot(_bar_chart(["Wins", "Losses", "Neutrals"],
+                              [summary["wins"], summary["losses"], summary["neutrals"]],
+                              "5. Win/Loss Distribution", "Count"))
+        plt.close("all")
+    with ch6:
+        if not strategy_breakdown.empty:
+            st.pyplot(_bar_chart(strategy_breakdown["strategy"], strategy_breakdown["net_pnl"],
+                                  "6. Strategy PnL Comparison", "Net PnL ($)"))
+            plt.close("all")
