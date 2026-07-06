@@ -12,6 +12,7 @@ model). See routes/pages.py, routes/api.py, routes/charts.py and
 background_worker.py.
 """
 from __future__ import annotations
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -19,6 +20,11 @@ from fastapi.staticfiles import StaticFiles
 
 from background_worker import start_background_threads
 from routes import pages, api, charts
+
+# Absolute, not relative to whatever the process's current working directory
+# happens to be at startup (can differ from the repo root depending on how
+# the host/platform launches uvicorn) — this is what actually serves CSS/JS.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 @asynccontextmanager
@@ -29,7 +35,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="BTCUSD Polymarket Signal Viewer", lifespan=lifespan)
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 app.include_router(pages.router)
 app.include_router(api.router)
