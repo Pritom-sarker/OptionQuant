@@ -283,26 +283,24 @@ def _find_window_candle(market_slug: str) -> dict | None:
 
 
 def _tick_tab3() -> None:
+    """
+    Multiple candidates/trades can be active concurrently — a fresh signal is
+    never blocked just because a previous trade hasn't settled yet. Deduped
+    by signal_time AND market_slug: each candle gets at most one order, and
+    each Polymarket contract gets at most one order, ever, regardless of how
+    many are already open. Every slot ({"candidate", "trade"}) is processed
+    independently each tick; a slot is dropped once its candidate expires
+    unentered or its trade settles/early-exits.
+    """
     settings = state.tab3_settings
     with state.lock:
-        candidate = state.tab3_candidate
-        trade = state.tab3_trade
+        slots = list(state.tab3_slots)
 
     market = polymarket_api.fetch_btcusd_market()
-    if market is None and candidate is None and trade is None:
+    if market is None and not slots:
         with state.lock:
             state.tab3_market_ok = False
         return
-
-    if trade is not None:
-        yes_id, no_id = trade.yes_token_id, trade.no_token_id
-    elif candidate is not None:
-        yes_id, no_id = candidate.yes_token_id, candidate.no_token_id
-    else:
-        yes_id, no_id = market["_yes_token_id"], market["_no_token_id"]
-
-    yes_book = orderbook_api.fetch_order_book(yes_id)
-    no_book = orderbook_api.fetch_order_book(no_id)
 
     tab1_prediction = state.tab1_prediction
     predicted_label = tab1_prediction.get("predicted_next", "UNKNOWN") if tab1_prediction else "UNKNOWN"
@@ -311,75 +309,86 @@ def _tick_tab3() -> None:
     # cached/derived value here) — this is what guarantees a candidate can
     # only ever be created for the exact candle a signal actually fired on,
     # never a stale carry-over from a previous tick.
-    if (predicted_label in ("GREEN", "RED") and tab1_prediction is not None
-            and trade is None and market is not None):
+    if predicted_label in ("GREEN", "RED") and tab1_prediction is not None and market is not None:
         signal_time = int(tab1_prediction["time"])
-        is_fresh_signal = (candidate is None or candidate.signal_time != signal_time
-                            or candidate.prediction != predicted_label)
-        if is_fresh_signal:
-            if candidate is not None and candidate.status == "OBSERVING":
-                log.info("[Tab3] Superseding candidate candle=%s (%s) — new signal candle=%s (%s) %s",
-                          candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)),
-                          signal_time, time.strftime("%H:%M:%S", time.localtime(signal_time)), predicted_label)
-                trade_engine.supersede_candidate(candidate)
-            log.info("[Tab3] NEW SIGNAL candle=%s (%s) direction=%s reason=%r -> creating candidate",
+        market_slug = market["_slug"]
+        duplicate = any(
+            s["candidate"].signal_time == signal_time or s["candidate"].market_slug == market_slug
+            for s in slots
+        )
+        if not duplicate:
+            log.info("[Tab3] NEW SIGNAL candle=%s (%s) direction=%s contract=%s reason=%r -> creating candidate",
                       signal_time, time.strftime("%H:%M:%S", time.localtime(signal_time)),
-                      predicted_label, tab1_prediction.get("reason", ""))
+                      predicted_label, market_slug, tab1_prediction.get("reason", ""))
             candidate = trade_engine.create_candidate(tab1_prediction, market)
-            yes_id, no_id = candidate.yes_token_id, candidate.no_token_id
-            yes_book = orderbook_api.fetch_order_book(yes_id)
-            no_book = orderbook_api.fetch_order_book(no_id)
-    elif candidate is None and trade is None:
+            slots.append({"candidate": candidate, "trade": None})
+        else:
+            log.debug("[Tab3] Signal candle=%s / contract=%s already has an order this cycle — skipping duplicate.",
+                       signal_time, market_slug)
+    elif not slots:
         log.debug("[Tab3] No valid signal this tick (predicted_label=%s) — trade skipped.", predicted_label)
 
-    if trade is None and candidate is not None and candidate.status == "OBSERVING":
-        if candidate.is_expired():
-            log.info("[Tab3] Candidate candle=%s (%s) EXPIRED with no entry — "
-                      "No valid signal converted to a trade — trade skipped.",
-                      candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)))
-            trade_engine.expire_candidate(candidate)
-            candidate = None
-        else:
+    still_active = []
+    for slot in slots:
+        candidate, trade = slot["candidate"], slot["trade"]
+
+        if trade is None:
+            if candidate.is_expired():
+                log.info("[Tab3] Candidate candle=%s (%s) EXPIRED with no entry — "
+                          "No valid signal converted to a trade — trade skipped.",
+                          candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)))
+                trade_engine.expire_candidate(candidate)
+                continue   # drop this slot — never entered, nothing more to track
+
+            yes_book = orderbook_api.fetch_order_book(candidate.yes_token_id)
+            no_book = orderbook_api.fetch_order_book(candidate.no_token_id)
             snap = trade_engine.record_candidate_snapshot(candidate, yes_book, no_book, settings)
             if snap["decision"] == "BUY":
                 trade = trade_engine.enter_trade(candidate, snap, settings)
+                slot["trade"] = trade
                 log.info("[Tab3] TRADE OPENED candle=%s (%s) side=%s mode=%s entry_price=%.3f reason=%r",
                           candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)),
                           trade.selected_side, trade.entry_mode, trade.entry_price, trade.entry_reason)
             else:
                 log.debug("[Tab3] Candidate candle=%s still OBSERVING — decision=%s mode=%s price=%.3f reason=%r",
                            candidate.signal_time, snap["decision"], snap["mode"], snap["selected_price"], snap["reason"])
+            still_active.append(slot)
+            continue
 
-    if trade is not None and trade.status == "OPEN":
+        if trade.status != "OPEN":
+            continue   # already settled/early-exited elsewhere — drop
+
+        yes_book = orderbook_api.fetch_order_book(trade.yes_token_id)
+        no_book = orderbook_api.fetch_order_book(trade.no_token_id)
         trade_engine.record_trade_snapshot(trade, yes_book, no_book)
         should_exit, exit_reason = trade_engine.check_early_exit(trade, settings)
         if should_exit:
             log.info("[Tab3] TRADE EARLY EXIT candle=%s entry_price=%.3f reason=%r",
                       trade.entry_time, trade.entry_price, exit_reason)
             trade_engine.settle_early_exit(trade, exit_reason)
+            continue   # settled — drop
         elif time.time() >= trade.expiry_time:
             window_candle = _find_window_candle(trade.market_slug)
             settled = trade_engine.settle_at_expiry(trade, window_candle)
             if settled is not None:
                 log.info("[Tab3] TRADE SETTLED signal_candle=%s entry_price=%.3f exit_price=%.3f result=%s",
                           trade.entry_time, trade.entry_price, trade.exit_price, trade.final_result)
+                continue   # settled — drop
+        still_active.append(slot)
 
     # Chart images are comparatively expensive (candle fetch + matplotlib +
-    # disk I/O) — regenerate them on their own slower cadence. Values
-    # (state.tab3_candidate/trade below) are updated every tick, always —
-    # Tab 3 and Tab 4 are both fully live now; only the pictures are throttled.
+    # disk I/O) — regenerate them on their own slower cadence, once per
+    # active slot. Values (state.tab3_slots below) are updated every tick,
+    # always — Tab 3 and Tab 4 are both fully live now; only the pictures
+    # are throttled.
     now = time.time()
     should_refresh_charts = (now - state.tab3_last_chart_refresh) >= settings["chart_refresh_interval"]
-    if should_refresh_charts and (candidate is not None or trade is not None):
-        _save_tab3_charts(candidate, trade)
-
-    if trade is not None and trade.status != "OPEN":
-        trade = None
-        candidate = None
+    if should_refresh_charts:
+        for slot in still_active:
+            _save_tab3_charts(slot["candidate"], slot["trade"])
 
     with state.lock:
-        state.tab3_candidate = candidate
-        state.tab3_trade = trade
+        state.tab3_slots = still_active
         state.tab3_market_ok = True
         if should_refresh_charts:
             state.tab3_last_chart_refresh = now
@@ -392,7 +401,7 @@ def tab3_loop() -> None:
         except Exception:
             log.exception("tab3_loop tick failed")
         with state.lock:
-            active = state.tab3_candidate is not None or state.tab3_trade is not None
+            active = bool(state.tab3_slots)
             interval = state.tab3_settings["refresh_interval"]
         time.sleep(interval if active else 10)
 

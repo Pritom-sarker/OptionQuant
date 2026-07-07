@@ -87,12 +87,18 @@ def tab2_chart(name: str):
 
 
 @router.get("/tab3/live_price.png")
-def tab3_live_price():
+def tab3_live_price(id: int = Query(None)):
+    """id = the candidate's db_id (Tab 3 can have several active slots at
+    once); picks the matching one, or the first active slot if omitted."""
     with state.lock:
-        candidate = state.tab3_candidate
-        trade = state.tab3_trade
-    cand_snaps = candidate.snapshot_history if candidate else []
-    trade_snaps = trade.snapshot_history if trade else []
+        slots = list(state.tab3_slots)
+    slot = None
+    if id is not None:
+        slot = next((s for s in slots if s["candidate"].db_id == id), None)
+    elif slots:
+        slot = slots[0]
+    cand_snaps = slot["candidate"].snapshot_history if slot else []
+    trade_snaps = slot["trade"].snapshot_history if slot and slot["trade"] else []
     return _matplotlib_png(chartb.build_tab3_live_price_chart(cand_snaps, trade_snaps))
 
 

@@ -171,54 +171,66 @@ def _entry_status_label(candidate, trade) -> str:
 
 
 def build_tab3_context() -> dict:
+    """
+    One "item" per active slot — multiple can run concurrently (a fresh
+    signal's candidate/trade is never blocked by a previous one still being
+    open), so the template loops over `items` instead of assuming a single
+    trade. Each item's signal/side comes from *that slot's own* candidate
+    (its actual originating signal), not the live global Tab 1 prediction,
+    which may have already moved on to a different, unrelated candle.
+    """
     with state.lock:
-        candidate = state.tab3_candidate
-        trade = state.tab3_trade
+        slots = list(state.tab3_slots)
         market_ok = state.tab3_market_ok
-        prediction = state.tab1_prediction
         settings = dict(state.tab3_settings)
 
-    predicted_label = prediction.get("predicted_next", "UNKNOWN") if prediction else "UNKNOWN"
-    ctx = {"market_ok": market_ok, "has_activity": candidate is not None or trade is not None,
-           "refresh_interval": settings["refresh_interval"], "now_str": time.strftime("%H:%M:%S")}
-    if candidate is None and trade is None:
-        return ctx
+    items = []
+    for slot in slots:
+        candidate, trade = slot["candidate"], slot["trade"]
+        latest_cand = candidate.snapshot_history[-1] if candidate.snapshot_history else None
+        latest_trade = trade.snapshot_history[-1] if trade and trade.snapshot_history else None
+        pressure = (latest_trade["pressure"] if latest_trade else
+                    (latest_cand["pressure"] if latest_cand else None))
+        items.append({
+            "id": candidate.db_id,
+            "signal_side": f"{candidate.prediction} / {candidate.selected_side}",
+            "status": _entry_status_label(candidate, trade),
+            "current_price": (f"{latest_trade['price']:.3f}" if latest_trade else
+                               (f"{latest_cand['selected_price']:.3f}" if latest_cand else "—")),
+            "pressure_str": f"{pressure:.3f}" if pressure is not None else "—",
+            "has_trade": trade is not None,
+            "pnl_pct": (f"{latest_trade['pnl_pct'] * 100:+.1f}%" if latest_trade else None),
+            "time_remaining": (f"{latest_trade['time_remaining']:.0f}s" if latest_trade else None),
+        })
 
-    latest_cand = candidate.snapshot_history[-1] if candidate and candidate.snapshot_history else None
-    latest_trade = trade.snapshot_history[-1] if trade and trade.snapshot_history else None
-
-    ctx.update({
-        "signal_side": f"{predicted_label} / {candidate.selected_side if candidate else trade.selected_side}",
-        "status": _entry_status_label(candidate, trade),
-        "current_price": (f"{latest_trade['price']:.3f}" if latest_trade else
-                           (f"{latest_cand['selected_price']:.3f}" if latest_cand else "—")),
-        "pressure": (latest_trade["pressure"] if latest_trade else
-                     (latest_cand["pressure"] if latest_cand else None)),
-        "has_trade": trade is not None,
-        "pnl_pct": (f"{latest_trade['pnl_pct'] * 100:+.1f}%" if latest_trade else None),
-        "time_remaining": (f"{latest_trade['time_remaining']:.0f}s" if latest_trade else None),
-    })
-    ctx["pressure_str"] = f"{ctx['pressure']:.3f}" if ctx["pressure"] is not None else "—"
-    return ctx
+    return {"market_ok": market_ok, "has_activity": bool(items), "items": items,
+            "refresh_interval": settings["refresh_interval"], "now_str": time.strftime("%H:%M:%S")}
 
 
 def build_tab4_context() -> dict:
     """
-    Full detail breakdown of the currently running trade — reads the same
-    live state Tab 3 does (no throttled snapshot): Tab 4 is fully live now,
-    only its chart images are regenerated on a slower cadence
-    (chart_refresh_interval), handled separately by background_worker.py.
+    Full detail breakdown of every currently active trade/candidate — reads
+    the same live state Tab 3 does (no throttled snapshot). Multiple can be
+    active concurrently, so this returns one detail block per slot; only
+    chart images are regenerated on a slower cadence (chart_refresh_interval),
+    handled separately by background_worker.py.
     """
     with state.lock:
-        candidate = state.tab3_candidate
-        trade = state.tab3_trade
-        prediction = state.tab1_prediction
+        slots = list(state.tab3_slots)
 
-    if candidate is None and trade is None:
+    if not slots:
         return {"has_activity": False}
 
-    predicted_label = prediction.get("predicted_next", "UNKNOWN") if prediction else "UNKNOWN"
-    latest_cand = candidate.snapshot_history[-1] if candidate and candidate.snapshot_history else None
+    return {"has_activity": True, "as_of": time.strftime("%H:%M:%S"),
+            "items": [_build_trade_detail_item(s["candidate"], s["trade"]) for s in slots]}
+
+
+def _build_trade_detail_item(candidate, trade) -> dict:
+    """One slot's full Tab 4 detail block — signal/side always come from
+    *this* candidate's own original signal, never the live global Tab 1
+    prediction (which may have already moved on to an unrelated candle)."""
+    predicted_label = candidate.prediction
+    latest_cand = candidate.snapshot_history[-1] if candidate.snapshot_history else None
     latest_trade = trade.snapshot_history[-1] if trade and trade.snapshot_history else None
 
     pf = obe.profit_factor(trade.entry_price) if trade else None
@@ -282,7 +294,7 @@ def build_tab4_context() -> dict:
         steps.append(f"Current plan: {candidate.last_mode} — {candidate.last_reason}")
 
     return {
-        "has_activity": True, "as_of": time.strftime("%H:%M:%S"),
+        "id": candidate.db_id, "has_activity": True, "as_of": time.strftime("%H:%M:%S"),
         "signal_direction": predicted_label,
         "selected_side": candidate.selected_side if candidate else trade.selected_side,
         "signal_time_str": (time.strftime("%H:%M:%S", time.localtime(candidate.signal_time))

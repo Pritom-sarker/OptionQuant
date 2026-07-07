@@ -88,8 +88,12 @@ class AppState:
             "depth_stable_tolerance": config.DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE,
             "immediate_mode": config.DEFAULT_TAB3_IMMEDIATE_MODE,
         }
-        self.tab3_candidate = None
-        self.tab3_trade = None
+        # Each slot is {"candidate": TradeCandidate, "trade": Optional[ActiveTrade]} —
+        # multiple can be active at once (one per candle/contract; a new candle's
+        # signal is never blocked just because a previous trade hasn't settled
+        # yet), deduped by signal_time/market_slug in background_worker.py so
+        # the same candle/contract can never get two orders.
+        self.tab3_slots: list = []
         self.tab3_last_chart_refresh: float = 0.0   # gates chart image regeneration only — values are always live
         self.tab3_market_ok: bool = False
 

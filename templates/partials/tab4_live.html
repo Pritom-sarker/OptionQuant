@@ -4,63 +4,66 @@
 <div class="callout idle">No active trade right now.
 Waiting for Tab 1 signal and Tab 2 order book confirmation.</div>
 {% else %}
-<p class="caption">As of {{ as_of }}</p>
+<p class="caption">As of {{ as_of }}{% if items|length > 1 %} — {{ items|length }} trades active at once, one per candle/contract{% endif %}</p>
+
+{% for item in items %}
+{% if items|length > 1 %}<h1 class="page-title" style="font-size: 18px;">Trade {{ loop.index }} of {{ items|length }} — signal candle {{ item.signal_time_str }}</h1>{% endif %}
 
 <h2 class="section">Active Trade Display</h2>
 <div class="metric-grid">
-  {{ m.metric("Signal Direction", signal_direction) }}
-  {{ m.metric("Selected Side", selected_side) }}
-  {{ m.metric("Signal Candle Time", signal_time_str) }}
-  {{ m.metric("Entry Status", entry_status) }}
+  {{ m.metric("Signal Direction", item.signal_direction) }}
+  {{ m.metric("Selected Side", item.selected_side) }}
+  {{ m.metric("Signal Candle Time", item.signal_time_str) }}
+  {{ m.metric("Entry Status", item.entry_status) }}
 </div>
 <div class="metric-grid">
-  {{ m.metric("Limit Order Price", limit_price) }}
-  {{ m.metric("Best Bid", best_bid) }}
-  {{ m.metric("Best Ask", best_ask) }}
-  {{ m.metric("Current Price", current_price) }}
+  {{ m.metric("Limit Order Price", item.limit_price) }}
+  {{ m.metric("Best Bid", item.best_bid) }}
+  {{ m.metric("Best Ask", item.best_ask) }}
+  {{ m.metric("Current Price", item.current_price) }}
 </div>
 <div class="metric-grid">
-  {{ m.metric("Entry Price", entry_price) }}
-  {{ m.metric("Stake", stake) }}
-  {{ m.metric("Profit Factor", profit_factor) }}
-  {{ m.metric("Unrealized PnL", unrealized_pnl, value_class=("green" if unrealized_pnl.startswith("+") else "red")) }}
+  {{ m.metric("Entry Price", item.entry_price) }}
+  {{ m.metric("Stake", item.stake) }}
+  {{ m.metric("Profit Factor", item.profit_factor) }}
+  {{ m.metric("Unrealized PnL", item.unrealized_pnl, value_class=("green" if item.unrealized_pnl.startswith("+") else "red")) }}
 </div>
 <div class="metric-grid">
-  {{ m.metric("Order Book Pressure", pressure) }}
-  {{ m.metric("Pressure Trend", pressure_trend) }}
+  {{ m.metric("Order Book Pressure", item.pressure) }}
+  {{ m.metric("Pressure Trend", item.pressure_trend) }}
 </div>
-<p class="caption">Reason: {{ reason }}</p>
+<p class="caption">Reason: {{ item.reason }}</p>
 
 <h2 class="section">Limit Order Position</h2>
-<div class="callout">{{ limit_text }}</div>
+<div class="callout">{{ item.limit_text }}</div>
 
 <h2 class="section">Active Chart</h2>
-{% if chart_path %}
-<div class="chart-card"><img data-live="/charts/tab3/file?path={{ chart_path }}" src="/charts/tab3/file?path={{ chart_path }}" alt="Trade candle chart"></div>
+{% if item.chart_path %}
+<div class="chart-card"><img data-live="/charts/tab3/file?path={{ item.chart_path }}" src="/charts/tab3/file?path={{ item.chart_path }}" alt="Trade candle chart"></div>
 {% else %}
 <p class="caption">Chart not generated yet.</p>
 {% endif %}
 
 <h2 class="section">Order Book Visualization</h2>
-<p class="caption">Selected side only — {{ side_only }}.</p>
-{% if orderbook_snap %}
+<p class="caption">Selected side only — {{ item.side_only }}.</p>
+{% if item.orderbook_snap %}
 <div class="metric-grid">
-  {{ m.metric("Weighted Bid Depth", "%.2f"|format(orderbook_snap.weighted_bid_depth)) }}
-  {{ m.metric("Weighted Ask Depth", "%.2f"|format(orderbook_snap.weighted_ask_depth)) }}
-  {{ m.metric("Pressure", "%.3f"|format(orderbook_snap.pressure), "%+.3f"|format(orderbook_snap.pressure_change)) }}
-  {{ m.metric("Spread", "%.4f"|format(orderbook_snap.spread)) }}
+  {{ m.metric("Weighted Bid Depth", "%.2f"|format(item.orderbook_snap.weighted_bid_depth)) }}
+  {{ m.metric("Weighted Ask Depth", "%.2f"|format(item.orderbook_snap.weighted_ask_depth)) }}
+  {{ m.metric("Pressure", "%.3f"|format(item.orderbook_snap.pressure), "%+.3f"|format(item.orderbook_snap.pressure_change)) }}
+  {{ m.metric("Spread", "%.4f"|format(item.orderbook_snap.spread)) }}
 </div>
 <div class="chart-grid">
   <div>
     <p class="caption">Top 5 Bids</p>
     <div class="table-scroll"><table class="data-table"><thead><tr><th>Price</th><th>Size</th></tr></thead><tbody>
-      {% for lv in orderbook_snap.top5_bids %}<tr><td>{{ lv.price }}</td><td>{{ lv.size }}</td></tr>{% endfor %}
+      {% for lv in item.orderbook_snap.top5_bids %}<tr><td>{{ lv.price }}</td><td>{{ lv.size }}</td></tr>{% endfor %}
     </tbody></table></div>
   </div>
   <div>
     <p class="caption">Top 5 Asks</p>
     <div class="table-scroll"><table class="data-table"><thead><tr><th>Price</th><th>Size</th></tr></thead><tbody>
-      {% for lv in orderbook_snap.top5_asks %}<tr><td>{{ lv.price }}</td><td>{{ lv.size }}</td></tr>{% endfor %}
+      {% for lv in item.orderbook_snap.top5_asks %}<tr><td>{{ lv.price }}</td><td>{{ lv.size }}</td></tr>{% endfor %}
     </tbody></table></div>
   </div>
 </div>
@@ -69,11 +72,11 @@ Waiting for Tab 1 signal and Tab 2 order book confirmation.</div>
 {% endif %}
 
 <div class="chart-grid">
-  {% if pressure_chart_path %}
-  <div class="chart-card"><img data-live="/charts/tab3/file?path={{ pressure_chart_path }}" src="/charts/tab3/file?path={{ pressure_chart_path }}" alt="Pressure over time"></div>
+  {% if item.pressure_chart_path %}
+  <div class="chart-card"><img data-live="/charts/tab3/file?path={{ item.pressure_chart_path }}" src="/charts/tab3/file?path={{ item.pressure_chart_path }}" alt="Pressure over time"></div>
   {% endif %}
-  {% if depth_chart_path %}
-  <div class="chart-card"><img data-live="/charts/tab3/file?path={{ depth_chart_path }}" src="/charts/tab3/file?path={{ depth_chart_path }}" alt="Bid depth vs ask depth"></div>
+  {% if item.depth_chart_path %}
+  <div class="chart-card"><img data-live="/charts/tab3/file?path={{ item.depth_chart_path }}" src="/charts/tab3/file?path={{ item.depth_chart_path }}" alt="Bid depth vs ask depth"></div>
   {% endif %}
 </div>
 
@@ -81,15 +84,18 @@ Waiting for Tab 1 signal and Tab 2 order book confirmation.</div>
 
 <h2 class="section">Trade Summary</h2>
 <div class="metric-grid">
-  {{ m.metric("Signal", signal_direction) }}
-  {{ m.metric("Side", selected_side) }}
-  {{ m.metric("Status", entry_status) }}
-  {{ m.metric("PnL", unrealized_pnl) }}
+  {{ m.metric("Signal", item.signal_direction) }}
+  {{ m.metric("Side", item.selected_side) }}
+  {{ m.metric("Status", item.entry_status) }}
+  {{ m.metric("PnL", item.unrealized_pnl) }}
 </div>
 
 <h2 class="section">Step by Step — In Plain English</h2>
-{% for step in steps %}
+{% for step in item.steps %}
 <div class="step"><span class="step-num">{{ loop.index }}.</span> {{ step }}</div>
+{% endfor %}
+
+{% if not loop.last %}<hr class="divider" style="margin: 32px 0; border-top-width: 2px;">{% endif %}
 {% endfor %}
 
 {% endif %}
