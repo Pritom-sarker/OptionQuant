@@ -49,13 +49,21 @@ def _run_backfill_scan_once(settings: dict) -> None:
 
 
 def _update_live_prediction(df, per_pattern, combined_dir, combined_mode, combined_act_ok) -> dict | None:
+    """
+    Deliberately re-evaluates the latest candle fresh on every single tick —
+    no "already looked at this candle" cache. Tab 1 refetches its rolling
+    candle window from scratch every tick, and small shifts in that window's
+    boundaries can make indicators (ATR/EMA, which depend on where the
+    window starts) come out very slightly different for the *same* calendar
+    candle between two ticks. A cache here would let one unlucky tick that
+    lands on the wrong side of a borderline filter permanently lock in a
+    missed signal for that candle's whole lifetime, even though a later tick
+    with freshly recalculated indicators would have caught it correctly —
+    this must self-heal every tick instead.
+    """
     latest_time = int(df["time"].iloc[-1])
     with state.lock:
-        last_seen_time = state.live_last_seen_time
         ap = state.live_active_prediction
-
-    if last_seen_time is not None and latest_time == last_seen_time:
-        return ap
 
     n = len(df)
     just_resolved = False
@@ -84,7 +92,6 @@ def _update_live_prediction(df, per_pattern, combined_dir, combined_mode, combin
 
     with state.lock:
         state.live_active_prediction = ap
-        state.live_last_seen_time = latest_time
     return ap
 
 

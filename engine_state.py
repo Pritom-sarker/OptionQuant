@@ -61,7 +61,6 @@ class AppState:
         self.backfill_rows: list = []
         self.backfill_total: int = 0
         self.live_active_prediction: Optional[dict] = None
-        self.live_last_seen_time: Optional[int] = None
         self.tab1_last_refresh: float = 0.0
         self.tab1_df = None            # last computed candle DataFrame (for the candle chart route)
         self.tab1_computed: Optional[dict] = None   # pat_dir/filters/act_ok/results/stats bundle
