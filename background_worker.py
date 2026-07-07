@@ -317,23 +317,31 @@ def _tick_tab3() -> None:
     # signal_time always comes straight from Tab 1's own candle row (never a
     # cached/derived value here) — this is what guarantees a candidate can
     # only ever be created for the exact candle a signal actually fired on,
-    # never a stale carry-over from a previous tick.
+    # never a stale carry-over from a previous tick. The candidate's market
+    # is ALWAYS fetched by fetch_market_for_window(signal_time) — the exact
+    # contract that candle's signal is about — never the generic "market"
+    # above (which only answers "is anything active at all right now" and
+    # can point at a later window than the signal actually predicts if
+    # there's any delay before the candidate gets created).
     if predicted_label in ("GREEN", "RED") and tab1_prediction is not None and market is not None:
         signal_time = int(tab1_prediction["time"])
-        market_slug = market["_slug"]
-        duplicate = any(
-            s["candidate"].signal_time == signal_time or s["candidate"].market_slug == market_slug
-            for s in slots
-        )
-        if not duplicate:
-            log.info("[Tab3] NEW SIGNAL candle=%s (%s) direction=%s contract=%s reason=%r -> creating candidate",
-                      signal_time, time.strftime("%H:%M:%S", time.localtime(signal_time)),
-                      predicted_label, market_slug, tab1_prediction.get("reason", ""))
-            candidate = trade_engine.create_candidate(tab1_prediction, market)
-            slots.append({"candidate": candidate, "trade": None})
+        duplicate = any(s["candidate"].signal_time == signal_time for s in slots)
+        if duplicate:
+            log.debug("[Tab3] Signal candle=%s already has an order this cycle — skipping duplicate.", signal_time)
         else:
-            log.debug("[Tab3] Signal candle=%s / contract=%s already has an order this cycle — skipping duplicate.",
-                       signal_time, market_slug)
+            target_market = polymarket_api.fetch_market_for_window(signal_time)
+            if target_market is None:
+                log.debug("[Tab3] Signal candle=%s (%s) has no matching Polymarket market available yet — "
+                           "will retry next tick.", signal_time, time.strftime("%H:%M:%S", time.localtime(signal_time)))
+            elif any(s["candidate"].market_slug == target_market["_slug"] for s in slots):
+                log.debug("[Tab3] Contract %s already has an order this cycle — skipping duplicate.",
+                           target_market["_slug"])
+            else:
+                log.info("[Tab3] NEW SIGNAL candle=%s (%s) direction=%s contract=%s reason=%r -> creating candidate",
+                          signal_time, time.strftime("%H:%M:%S", time.localtime(signal_time)),
+                          predicted_label, target_market["_slug"], tab1_prediction.get("reason", ""))
+                candidate = trade_engine.create_candidate(tab1_prediction, target_market)
+                slots.append({"candidate": candidate, "trade": None})
     elif not slots:
         log.debug("[Tab3] No valid signal this tick (predicted_label=%s) — trade skipped.", predicted_label)
 

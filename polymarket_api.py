@@ -79,11 +79,26 @@ def _get_token_ids(market: dict) -> tuple[str, str]:
     return str(ids[0]), str(ids[1])
 
 
+def _attach_market_meta(m: dict, slug: str, window_start_ts: int, tte: float) -> dict:
+    yes_id, no_id = _get_token_ids(m)
+    m["_tte"] = tte
+    m["_yes_token_id"] = yes_id
+    m["_no_token_id"] = no_id
+    m["_slug"] = slug
+    m["_window_start_ts"] = window_start_ts
+    m["_market_url"] = f"{config.POLYMARKET_EVENT_URL_BASE}/{slug}"
+    return m
+
+
 def fetch_btcusd_market() -> Optional[dict]:
     """
     Return the currently active BTC 5-minute Up/Down market (the window
     closest to expiring right now), with token ids and time-to-expiry
     attached. Returns None if no active BTC 5-minute market is found.
+
+    For general "what's currently active" queries only (e.g. Tab 2's
+    observer). NEVER use this to pick which market a new trade candidate
+    should trade — see fetch_market_for_window()'s docstring for why.
 
     IMPORTANT — slug semantics, verified directly against live Polymarket
     data: "btc-updown-5m-{ts}" encodes the window's START, not its end
@@ -113,15 +128,32 @@ def fetch_btcusd_market() -> Optional[dict]:
         if tte < config.MARKET_MIN_TTE_SEC or tte > config.MARKET_MAX_TTE_SEC:
             continue
         if best is None or tte < best["_tte"]:
-            yes_id, no_id = _get_token_ids(m)
-            m["_tte"] = tte
-            m["_yes_token_id"] = yes_id
-            m["_no_token_id"] = no_id
-            m["_slug"] = slug
-            m["_window_start_ts"] = window_start_ts
-            m["_market_url"] = f"{config.POLYMARKET_EVENT_URL_BASE}/{slug}"
-            best = m
+            best = _attach_market_meta(m, slug, window_start_ts, tte)
     return best
+
+
+def fetch_market_for_window(window_start_ts: int) -> Optional[dict]:
+    """
+    Fetches the EXACT market whose window starts at window_start_ts —
+    always used when creating a trade candidate for a specific Tab 1
+    signal (window_start_ts = that signal's own candle close time, which
+    is exactly the next window's start).
+
+    This must never be replaced with fetch_btcusd_market()'s "closest to
+    expiry right now" heuristic for candidate creation: if there's any
+    delay between a signal firing and its candidate actually being created
+    (order-book fetch latency, a busy tick, etc.), "closest to expiry now"
+    can have already rolled over to a *later* window than the one the
+    signal is actually about — silently attaching the trade to the wrong
+    contract and settling it against the wrong candle. Pinning directly to
+    the signal's own timestamp makes that entire class of bug impossible.
+    """
+    slug = f"{config.COIN}-updown-5m-{window_start_ts}"
+    m = _fetch_market_by_slug(slug)
+    if not m or not m.get("active") or m.get("closed"):
+        return None
+    tte = _seconds_to_expiry(m)
+    return _attach_market_meta(m, slug, window_start_ts, tte)
 
 
 def fetch_btcusd_price_history(token_id: str, hours_back: float = None) -> list[dict]:
