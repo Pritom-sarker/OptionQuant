@@ -104,7 +104,10 @@ def build_tab2_context() -> dict:
         return {"market_ok": False}
 
     predicted_label = prediction.get("predicted_next", "UNKNOWN") if prediction else "UNKNOWN"
-    next_slug = f"{config.COIN}-updown-5m-{market['_window_end_ts'] + 300}"
+    # market['_window_start_ts'] is the *current* window's start (slugs are
+    # keyed by start, not end — see polymarket_api.fetch_btcusd_market's
+    # docstring) — the next window's own start is exactly 300s later.
+    next_slug = f"{config.COIN}-updown-5m-{market['_window_start_ts'] + 300}"
     next_url = f"{config.POLYMARKET_EVENT_URL_BASE}/{next_slug}"
     expiry_time = time.time() + market["_tte"]
 

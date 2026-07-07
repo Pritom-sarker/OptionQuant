@@ -264,20 +264,29 @@ def _find_window_candle(market_slug: str) -> dict | None:
     Checks Tab 1's already-fetched rolling candles first (no extra network
     call, since Tab 1 ticks every 15s anyway); falls back to a fresh fetch
     only if that window has already scrolled out of Tab 1's window.
+
+    market_slug encodes the window's START (verified against live Polymarket
+    data — see polymarket_api.fetch_btcusd_market's docstring), so the
+    candle that actually resolves this market is the one whose CLOSE time is
+    start + 300, not the raw slug timestamp itself. Matching against the raw
+    timestamp instead (an earlier version of this function did) settles
+    against the candle immediately *before* the real window — i.e. the
+    signal candle itself — which is a completely different, wrong result.
     """
-    window_end_ts = trade_engine.parse_window_end_ts(market_slug)
+    window_start_ts = trade_engine.parse_window_start_ts(market_slug)
+    window_close_ts = window_start_ts + 300
 
     with state.lock:
         df = state.tab1_df
 
     if df is not None:
-        diffs = (df["time"] - window_end_ts).abs()
+        diffs = (df["time"] - window_close_ts).abs()
         if len(diffs) and diffs.min() <= _CANDLE_MATCH_TOLERANCE_SEC:
             row = df.loc[diffs.idxmin()]
             return {"open": float(row["open"]), "close": float(row["close"])}
 
     for c in btcapi.fetch_btcusd_candles(config.BACKFILL_CANDLES_TARGET):
-        if abs(c["time"] - window_end_ts) <= _CANDLE_MATCH_TOLERANCE_SEC:
+        if abs(c["time"] - window_close_ts) <= _CANDLE_MATCH_TOLERANCE_SEC:
             return c
     return None
 

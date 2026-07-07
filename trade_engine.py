@@ -403,8 +403,11 @@ def settle_early_exit(trade: ActiveTrade, reason: str) -> dict:
                       exit_reason=reason, pnl=latest["pnl"], return_pct=latest["pnl_pct"])
 
 
-def parse_window_end_ts(market_slug: str) -> int:
-    """market_slug is always '{coin}-updown-5m-{window_end_ts}' — see polymarket_api.py."""
+def parse_window_start_ts(market_slug: str) -> int:
+    """market_slug is always '{coin}-updown-5m-{window_start_ts}' — verified
+    directly against live Polymarket data (see polymarket_api.fetch_btcusd_market's
+    docstring): the embedded timestamp is the window's START, not its end.
+    The window's real end/resolution is start + 300."""
     return int(market_slug.rsplit("-", 1)[1])
 
 

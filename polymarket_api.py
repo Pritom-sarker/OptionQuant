@@ -84,22 +84,28 @@ def fetch_btcusd_market() -> Optional[dict]:
     Return the currently active BTC 5-minute Up/Down market (the window
     closest to expiring right now), with token ids and time-to-expiry
     attached. Returns None if no active BTC 5-minute market is found.
+
+    IMPORTANT — slug semantics, verified directly against live Polymarket
+    data: "btc-updown-5m-{ts}" encodes the window's START, not its end
+    (confirmed via the market's own endDate field and question text, e.g.
+    slug ...-1783389000 -> question "9:50PM-9:55PM ET" with
+    endDate = 1783389000 + 300, not 1783389000 itself). A window is only
+    truly expired once ts + 300 has passed — checking `ts <= now` instead
+    (an earlier version of this function did) incorrectly rejects the
+    genuinely-current, still-active window and forces selection of a later
+    one, which is *worse* than the API-lag race it was meant to guard
+    against. tte itself (from _seconds_to_expiry, using the market's own
+    endDate) has always been correct, so the smallest-tte comparison below
+    already naturally prefers the true current window on its own.
     """
     now = int(time.time())
     aligned = (now // 300) * 300
     best = None
     for i in range(config.WINDOWS_TO_CHECK):
-        window_end_ts = aligned + i * 300
-        if window_end_ts <= now:
-            # This window's own price-determining period has already fully
-            # elapsed. Never rely solely on the API's active/closed flags or
-            # endDate-derived TTE to catch this — both can lag the real clock
-            # by a few seconds right after a candle closes, which would let an
-            # already-resolved window still look "active" with a small
-            # positive TTE and win as "soonest to expire". window_end_ts
-            # itself is unambiguous, so check it directly first.
-            continue
-        slug = f"{config.COIN}-updown-5m-{window_end_ts}"
+        window_start_ts = aligned + i * 300
+        if window_start_ts + 300 <= now:
+            continue   # this window's real 5-minute duration has fully elapsed
+        slug = f"{config.COIN}-updown-5m-{window_start_ts}"
         m = _fetch_market_by_slug(slug)
         if not m or not m.get("active") or m.get("closed"):
             continue
@@ -112,7 +118,7 @@ def fetch_btcusd_market() -> Optional[dict]:
             m["_yes_token_id"] = yes_id
             m["_no_token_id"] = no_id
             m["_slug"] = slug
-            m["_window_end_ts"] = window_end_ts
+            m["_window_start_ts"] = window_start_ts
             m["_market_url"] = f"{config.POLYMARKET_EVENT_URL_BASE}/{slug}"
             best = m
     return best
