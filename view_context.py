@@ -388,16 +388,25 @@ def build_tab5_context() -> dict:
     (build_trade_detail_context) rather than eagerly building every trade's
     full report here (which used to mean fetching every snapshot for every
     past trade on every single poll, most of which the user never opens).
+
+    Skipped-late candidates (trade_engine.skip_late_candidate — the
+    TAB3_ENTRY_DEADLINE_SEC backstop) are merged in for visibility, sorted
+    chronologically alongside real trades, but stats are computed from
+    all_trades alone — a skipped candidate never risked a stake, so it must
+    never touch win rate/profit/PF numbers.
     """
     all_trades = trade_db.fetch_all_trades()
-    if not all_trades:
+    skipped = trade_db.fetch_skipped_late_candidates()
+    if not all_trades and not skipped:
         return {"has_trades": False}
     stats = _closed_trades_summary(all_trades)
+    stats["skipped_late"] = len(skipped)
+
     rows = []
     for t in all_trades:
         icon = "🟢" if t["final_result"] == "WIN" else ("🔴" if t["final_result"] == "LOSS" else "⏳")
         rows.append({
-            "id": t["id"], "icon": icon,
+            "kind": "trade", "id": t["id"], "icon": icon, "sort_ts": t["entry_time"] or 0,
             "signal_time_str": time.strftime("%H:%M:%S", time.localtime(t["entry_time"])) if t["entry_time"] else "—",
             "side": "YES" if t["direction"] == 1 else "NO", "entry_mode": t["entry_mode"],
             "entry_price": round(t["entry_price"], 3) if t["entry_price"] is not None else "—",
@@ -406,6 +415,16 @@ def build_tab5_context() -> dict:
             "result": t["final_result"] or "—", "status": t["status"], "prediction": t["prediction"],
             "return_pct": t["return_pct"],
         })
+    for c in skipped:
+        rows.append({
+            "kind": "skipped", "id": c["id"], "icon": "⏭️", "sort_ts": c["signal_time"] or 0,
+            "signal_time_str": time.strftime("%H:%M:%S", time.localtime(c["signal_time"])) if c["signal_time"] else "—",
+            "side": "YES" if c["direction"] == 1 else "NO", "entry_mode": "—",
+            "entry_price": "—", "exit_price": "—", "pnl": "—",
+            "result": "SKIPPED", "status": "SKIPPED_LATE", "prediction": c["prediction"],
+            "return_pct": None,
+        })
+    rows.sort(key=lambda r: r["sort_ts"], reverse=True)
     return {"has_trades": True, "stats": stats, "rows": rows}
 
 

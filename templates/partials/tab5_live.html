@@ -10,6 +10,7 @@
   {{ m.metric("Losses", stats.losses, value_class="red") }}
   {{ m.metric("Early Exits", stats.early_exits) }}
   {{ m.metric("Win Rate", "%.1f%%"|format(stats.win_rate)) }}
+  {{ m.metric("Skipped (Late)", stats.skipped_late) }}
 </div>
 <div class="metric-grid">
   {{ m.metric("Total Profit", "%.4f"|format(stats.total_profit)) }}
@@ -18,19 +19,22 @@
   {{ m.metric("Worst Trade", ("%.4f"|format(stats.worst)) if stats.worst is not none else "—") }}
   {{ m.metric("Avg Entry / Avg PF", ("%.3f / %.2fx"|format(stats.avg_entry, stats.avg_pf)) if stats.avg_entry is not none else "—") }}
 </div>
+{% if stats.skipped_late %}
+<p class="caption">"Skipped (Late)" rows below never risked a stake — the window opened but no order was placed before the entry deadline passed, so they're excluded from every stat above.</p>
+{% endif %}
 
 <div class="table-scroll">
 <table class="data-table">
-  <thead><tr><th>Trade ID</th><th>Signal Time</th><th>Side</th><th>Entry Type</th><th>Entry Price</th>
+  <thead><tr><th>ID</th><th>Signal Time</th><th>Side</th><th>Entry Type</th><th>Entry Price</th>
     <th>Exit Price</th><th>Profit</th><th>Result</th><th>Status</th><th>Details</th></tr></thead>
   <tbody>
     {% for t in rows %}
-    <tr>
+    <tr{{ ' style="opacity: 0.6;"' | safe if t.kind == "skipped" else "" }}>
       <td>{{ t.id }}</td><td>{{ t.signal_time_str }}</td><td>{{ t.side }}</td><td>{{ t.entry_mode }}</td>
       <td>{{ t.entry_price }}</td><td>{{ t.exit_price }}</td><td>{{ t.pnl }}</td>
       <td><span class="badge {{ 'green' if t.result=='WIN' else ('red' if t.result=='LOSS' else 'neutral') }}">{{ t.result }}</span></td>
       <td>{{ t.status }}</td>
-      <td><a href="/tab5/trade/{{ t.id }}">{{ t.icon }} Details</a></td>
+      <td>{% if t.kind == "trade" %}<a href="/tab5/trade/{{ t.id }}">{{ t.icon }} Details</a>{% else %}{{ t.icon }} —{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>

@@ -137,6 +137,21 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def reset_database() -> None:
+    """
+    Wipes every candidate/trade/snapshot row — used by Settings' "Reset
+    Database" switch. Deletes rows rather than dropping tables so the schema
+    (including migrated columns) stays intact with zero re-init work. Caller
+    is responsible for also clearing engine_state.state.tab3_slots (the
+    in-memory active positions reference row ids this just deleted).
+    """
+    with get_connection() as conn:
+        conn.execute("DELETE FROM trade_snapshots")
+        conn.execute("DELETE FROM candidate_snapshots")
+        conn.execute("DELETE FROM trades")
+        conn.execute("DELETE FROM candidates")
+
+
 def insert_candidate(candidate: dict) -> int:
     with get_connection() as conn:
         cur = conn.execute(
@@ -264,6 +279,16 @@ def fetch_trade(trade_id: int) -> dict | None:
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
         return dict(row) if row else None
+
+
+def fetch_skipped_late_candidates() -> list[dict]:
+    """Candidates dropped by trade_engine.skip_late_candidate() — the entry
+    deadline (config.TAB3_ENTRY_DEADLINE_SEC after window open) passed before
+    any order was placed. Surfaced in Tab 5 for visibility; never touches
+    win/loss/profit stats since no stake was ever risked on them."""
+    with get_connection() as conn:
+        rows = conn.execute("SELECT * FROM candidates WHERE status = 'SKIPPED_LATE' ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
 
 
 def fetch_candidate(candidate_id: int) -> dict | None:

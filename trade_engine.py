@@ -92,6 +92,17 @@ class TradeCandidate:
     def is_expired(self) -> bool:
         return time.time() > self.expiry_time
 
+    def entry_deadline_passed(self) -> bool:
+        """
+        signal_time is the predicted window's own START (see the module
+        docstring's window-semantics note wherever signal_time is set) — so
+        this is "has more than TAB3_ENTRY_DEADLINE_SEC elapsed since the
+        window actually opened", independent of the window's full is_expired()
+        cutoff (which is ~300s away and far too late to still be a fair
+        entry). Backstops Early Entry for the rare cases it still misses.
+        """
+        return time.time() > self.signal_time + config.TAB3_ENTRY_DEADLINE_SEC
+
 
 @dataclass
 class ActiveTrade:
@@ -180,6 +191,23 @@ def expire_candidate(candidate: TradeCandidate) -> None:
         candidate.status = "EXPIRED"
         candidate.last_reason = "Market expired before any entry condition was met."
         trade_db.update_candidate_status(candidate.db_id, "EXPIRED")
+
+
+def skip_late_candidate(candidate: TradeCandidate) -> None:
+    """
+    The window already opened more than TAB3_ENTRY_DEADLINE_SEC seconds ago
+    with no entry yet — entering now would mean buying deep into the window
+    at a price no longer representative of the open. Skipped instead of
+    entered; no stake, no PnL, never touches money-management sizing. Still
+    persisted so it shows up in Tab 5's history for visibility.
+    """
+    if candidate.status == "OBSERVING":
+        seconds_late = time.time() - candidate.signal_time
+        candidate.status = "SKIPPED_LATE"
+        candidate.last_reason = (f"Window opened {seconds_late:.0f}s ago with no entry yet (entry deadline is "
+                                  f"{config.TAB3_ENTRY_DEADLINE_SEC}s after open) — skipped to avoid a stale price. "
+                                  f"No stake risked, no PnL.")
+        trade_db.update_candidate_status(candidate.db_id, "SKIPPED_LATE")
 
 
 def _decide_entry(candidate: TradeCandidate, calc: dict, settings: dict) -> tuple[Optional[str], str, str]:

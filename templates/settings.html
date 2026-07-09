@@ -5,6 +5,7 @@
 <p class="caption">Adjust Tab 1's signal/pattern settings and Tab 3's trading engine thresholds. Changes apply immediately to the background engine.</p>
 
 {% if saved %}<div class="callout" style="border-left-color: var(--green);">Settings saved.</div>{% endif %}
+{% if reset %}<div class="callout" style="border-left-color: var(--green);">Database reset — all candidates, trades, and snapshots cleared.</div>{% endif %}
 
 <h2 class="section">Tab 1 — Pattern &amp; Signal</h2>
 <p class="caption">Enable as many base patterns as you like — each one runs completely independently with its own filter toggles below it.
@@ -43,7 +44,8 @@
 </form>
 
 <h2 class="section">Tab 3 — Trading Engine</h2>
-<p class="caption">Every trade's stake is sized live by Tab 6's Money Management settings, not a flat amount here — see the <a href="/tab6">Money Management</a> tab.</p>
+<p class="caption">Every trade's stake is sized live by Tab 6's Money Management settings, not a flat amount here — see the <a href="/tab6">Money Management</a> tab.
+  A candidate whose window has already opened for more than {{ entry_deadline_sec }}s with no entry yet is skipped instead of entered late — see Tab 5's "Skipped (Late)" rows.</p>
 <form class="settings-form" method="post" action="/settings/tab3">
   <div class="field"><label>Refresh Interval (sec)</label><input type="number" name="refresh_interval" value="{{ tab3.refresh_interval }}" min="1" max="60"></div>
   <div class="field"><label>Chart Refresh Interval (sec)</label><input type="number" name="chart_refresh_interval" value="{{ tab3.chart_refresh_interval }}" min="5" max="300"></div>
@@ -65,4 +67,12 @@
 
   <div class="form-actions"><button type="submit">Apply Tab 3 Settings</button></div>
 </form>
+
+<h2 class="section">Danger Zone</h2>
+<div class="callout" style="border-left-color: var(--red);">
+  <p style="margin: 0 0 10px 0;">Permanently deletes every candidate, trade, and snapshot (Tab 3/4/5/6 all go back to a clean slate — Money Management's balance and loss basket reset to your starting balance since they're computed from this same history). Currently open trades are abandoned, not settled. This cannot be undone.</p>
+  <form method="post" action="/settings/reset_database" onsubmit="return confirm('Permanently delete all trade history? This cannot be undone.');">
+    <button type="submit" class="btn-danger">Reset Database</button>
+  </form>
+</div>
 {% endblock %}

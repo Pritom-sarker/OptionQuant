@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse
 
 import config
+import trade_db
 from engine_state import state, save_settings
 from templates_engine import templates
 import view_context as vc
@@ -78,12 +79,13 @@ def settings_money_management(
 
 
 @router.get("/settings")
-def settings_page(request: Request, saved: bool = False):
+def settings_page(request: Request, saved: bool = False, reset: bool = False):
     with state.lock:
         tab1 = dict(state.tab1_settings)
         tab3 = dict(state.tab3_settings)
     ctx = {"request": request, "active_tab": "settings", "tab1": tab1, "tab3": tab3,
-           "pattern_options": config.PATTERN_OPTIONS, "pattern_slugs": config.PATTERN_SLUGS, "saved": saved}
+           "pattern_options": config.PATTERN_OPTIONS, "pattern_slugs": config.PATTERN_SLUGS,
+           "saved": saved, "reset": reset, "entry_deadline_sec": config.TAB3_ENTRY_DEADLINE_SEC}
     return templates.TemplateResponse(request, "settings.html", ctx)
 
 
@@ -145,3 +147,20 @@ def settings_tab3(
         }
     save_settings()
     return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+
+@router.post("/settings/reset_database")
+def reset_database():
+    """
+    Wipes every candidate/trade/snapshot row (trade_db.reset_database) — Tab
+    3/4/5/6 all go back to a clean slate, and Tab 6's money-management
+    sizing naturally resets to base_trade_amount since it derives the loss
+    basket from trade_db, not separately-tracked state. Also clears
+    state.tab3_slots since those in-memory positions reference row ids that
+    just got deleted; a trade already OPEN when this runs is abandoned
+    (never settled/recorded) rather than left dangling against a dead id.
+    """
+    trade_db.reset_database()
+    with state.lock:
+        state.tab3_slots = []
+    return RedirectResponse(url="/settings?reset=1", status_code=303)

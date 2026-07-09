@@ -435,6 +435,14 @@ def _tick_tab3() -> None:
                 trade_engine.expire_candidate(candidate)
                 continue   # drop this slot — never entered, nothing more to track
 
+            if candidate.entry_deadline_passed():
+                log.info("[Tab3] Candidate candle=%s (%s) SKIPPED — window opened %.0fs ago, past the "
+                          "%ds entry deadline. No stake risked.",
+                          candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)),
+                          time.time() - candidate.signal_time, config.TAB3_ENTRY_DEADLINE_SEC)
+                trade_engine.skip_late_candidate(candidate)
+                continue   # drop this slot — too late to enter fairly, nothing more to track
+
             yes_book = orderbook_api.fetch_order_book(candidate.yes_token_id)
             no_book = orderbook_api.fetch_order_book(candidate.no_token_id)
             snap = trade_engine.record_candidate_snapshot(candidate, yes_book, no_book, settings)

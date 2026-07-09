@@ -67,18 +67,20 @@ F5_ANTI_CHOP_ATR_MULT = 0.15
 DEFAULT_MIN_SIGNALS = 10   # matches Pine's i_min_sigs — "Min signals for edge detection"
 MINTICK = 0.01             # matches Pine's syminfo.mintick floor for BTC/USDT-scale prices
 
-# Early Entry (opt-in, OFF by default): normally a pattern is only ever
-# evaluated once its candle has fully closed (see btc_price_api's
-# _drop_forming_candle). When this is on, the last DEFAULT_TAB1_EARLY_ENTRY_
-# LEAD_SEC seconds before close also get checked against the *forming*
-# candle's still-moving OHLC — if the pattern already matches, that's used
-# as an early signal so Tab 3 can place the next window's order without
-# waiting for the close + the normal detection cycle. Trades entered off an
-# early signal are never cancelled/exited if the true close later disagrees
-# with the provisional one — they ride to expiry like any other trade; only
-# a log line records the mismatch.
-DEFAULT_TAB1_EARLY_ENTRY_ENABLED  = False
-DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC = 10
+# Early Entry (ON by default): normally a pattern is only ever evaluated
+# once its candle has fully closed (see btc_price_api's _drop_forming_candle).
+# With this on, the last DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC seconds before
+# close also get checked against the *forming* candle's still-moving OHLC —
+# if the pattern already matches, that's used as an early signal so Tab 3
+# can place the next window's order right as it opens instead of waiting for
+# the close + the normal detection cycle. This is the fix for signals
+# occasionally being detected 2-3 minutes late (see TAB3_ENTRY_DEADLINE_SEC
+# below for the backstop on the rare cases this still misses). Trades
+# entered off an early signal are never cancelled/exited if the true close
+# later disagrees with the provisional one — they ride to expiry like any
+# other trade; only a log line records the mismatch.
+DEFAULT_TAB1_EARLY_ENTRY_ENABLED  = True
+DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC = 15
 
 # ─── Timing ────────────────────────────────────────────────────────────────
 REFRESH_MS = 60_000   # dashboard + candle refresh, once a minute
@@ -155,6 +157,16 @@ DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE = 0.10    # Mode 1 "ask depth stable" — ma
 # ever closes the trade). Simpler alternative to the order-book-based entry
 # modes above — everything else (stake, settlement, PnL, charts) is unchanged.
 DEFAULT_TAB3_IMMEDIATE_MODE = True
+
+# Backstop for signals that still land late despite Early Entry (see Tab 1's
+# early-entry settings above): once a candidate's predicted window has
+# actually opened (time.time() >= candidate.signal_time), it gets this many
+# seconds to enter — after that, entering would mean buying deep into a
+# window at a price that's no longer representative of the open, so the
+# candidate is marked SKIPPED_LATE instead of entered. Skipped-late
+# candidates show up in Tab 5's history for visibility but never factor into
+# win/loss/profit stats, since no money ever moved on them.
+TAB3_ENTRY_DEADLINE_SEC = 30
 
 TAB3_SNAPSHOT_HISTORY_MAX = 2000   # bounded in-memory rolling history per candidate/trade
 
