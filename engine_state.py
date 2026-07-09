@@ -82,7 +82,6 @@ class AppState:
             "refresh_interval": config.DEFAULT_TAB3_REFRESH_INTERVAL_SEC,
             "chart_refresh_interval": config.DEFAULT_TAB3_CHART_REFRESH_SEC,
             "observation_burst": config.DEFAULT_TAB3_OBSERVATION_BURST_SEC,
-            "stake": config.DEFAULT_TAB3_STAKE,
             "max_entry_price": config.DEFAULT_TAB3_MAX_ENTRY_PRICE,
             "hard_block_price": config.DEFAULT_TAB3_HARD_BLOCK_PRICE,
             "min_profit_factor": config.DEFAULT_TAB3_MIN_PROFIT_FACTOR,

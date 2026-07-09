@@ -128,7 +128,10 @@ DEFAULT_STAKE = 1.0   # $1 per simulated paper trade — never a real order
 # ─── Tab 3: Trading Engine (paper trading only — no wallet, no real order) ──
 # Defaults only — the Tab 3 sidebar ("Apply Settings") is the single source
 # of truth at runtime; nothing here is read directly by trade_engine.py once
-# the sidebar has applied its own settings dict.
+# the sidebar has applied its own settings dict. No per-trade stake setting
+# here on purpose — every real trade's stake is now sized live by Tab 6's
+# Money Management settings (see money_management.next_trade_amount and
+# background_worker._tick_tab3), not a flat dollar amount.
 TAB3_DB_PATH = "tab3_trades.db"
 TAB3_CHART_DIR = "tab3_charts"
 
@@ -136,7 +139,6 @@ DEFAULT_TAB3_REFRESH_INTERVAL_SEC      = 3      # engine tick — fast, drives T
 DEFAULT_TAB3_CHART_REFRESH_SEC         = 30     # chart images only regenerate this often — values are always live
 DEFAULT_TAB3_OBSERVATION_BURST_SEC     = 20     # Candidate Observation Time (initial burst, ~10 snapshots)
 
-DEFAULT_TAB3_STAKE                  = 1.0
 DEFAULT_TAB3_MAX_ENTRY_PRICE        = 0.52    # soft cap used by the entry-mode logic
 DEFAULT_TAB3_HARD_BLOCK_PRICE       = 0.55    # hard rule — never enter above this, no exceptions
 DEFAULT_TAB3_MIN_PROFIT_FACTOR      = 0.90

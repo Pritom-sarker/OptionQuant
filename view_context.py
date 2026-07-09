@@ -419,15 +419,11 @@ def build_money_management_context() -> dict:
     latest settled trade plus whatever settings are currently applied.
     """
     settings = dict(state.mm_settings)
-    all_trades = list(reversed(trade_db.fetch_all_trades()))   # fetch_all_trades() is newest-first; replay needs oldest-first
-    if not all_trades:
+    db_rows = trade_db.fetch_all_trades()
+    if not db_rows:
         return {"has_trades": False, "settings": settings}
 
-    sim_trades = [
-        {"time": t["entry_time"], "result": t["final_result"], "entry_price": t["entry_price"],
-         "direction": "YES" if t["direction"] == 1 else "NO"}
-        for t in all_trades
-    ]
+    sim_trades = mm.trades_from_db_rows(db_rows)
     result = mm.run_simulation(sim_trades, settings)
     hourly = mm.hourly_balance_curve(result["trade_log"], settings["starting_balance"])
 

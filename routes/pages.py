@@ -126,7 +126,7 @@ async def settings_tab1(request: Request):
 @router.post("/settings/tab3")
 def settings_tab3(
     refresh_interval: int = Form(...), chart_refresh_interval: int = Form(...),
-    observation_burst: int = Form(...), stake: float = Form(...),
+    observation_burst: int = Form(...),
     max_entry_price: float = Form(...), hard_block_price: float = Form(...),
     min_profit_factor: float = Form(...), early_exit_loss_pct: int = Form(...),
     pressure_confirm_count: int = Form(...), max_spread: float = Form(...),
@@ -136,7 +136,7 @@ def settings_tab3(
     with state.lock:
         state.tab3_settings = {
             "refresh_interval": refresh_interval, "chart_refresh_interval": chart_refresh_interval,
-            "observation_burst": observation_burst, "stake": stake,
+            "observation_burst": observation_burst,
             "max_entry_price": max_entry_price, "hard_block_price": hard_block_price,
             "min_profit_factor": min_profit_factor, "early_exit_loss_pct": early_exit_loss_pct / 100.0,
             "pressure_confirm_count": pressure_confirm_count, "max_spread": max_spread,

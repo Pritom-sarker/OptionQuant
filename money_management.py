@@ -215,3 +215,43 @@ def hourly_balance_curve(trade_log: list[dict], starting_balance: float) -> list
         out.append({"hour": h, "balance": last_balance})
         h += 3600
     return out
+
+
+def trades_from_db_rows(rows: list[dict]) -> list[dict]:
+    """
+    Converts trade_db rows (as returned by trade_db.fetch_all_trades(),
+    newest-first) into the chronological (oldest -> newest) {"time","result",
+    "entry_price","direction"} list run_simulation() expects. The single
+    shared conversion — both Tab 6's display and Tab 3's live sizing (see
+    next_trade_amount()) call this so they can never drift out of sync with
+    each other.
+    """
+    return [
+        {"time": r["entry_time"], "result": r["final_result"], "entry_price": r["entry_price"],
+         "direction": "YES" if r["direction"] == 1 else "NO"}
+        for r in reversed(rows)
+    ]
+
+
+def next_trade_amount(db_rows: list[dict], money: dict) -> float:
+    """
+    The exact dollar stake Tab 3's trade engine should use for its NEXT real
+    trade — the same sizing formula run_simulation() applies to every
+    replayed trade, evaluated against the loss basket left behind by every
+    trade settled so far. This is what makes Tab 3's real trades "go through
+    money management" using whatever settings are currently applied on
+    Tab 6: both read the exact same trade_db history and the exact same
+    mm_settings, so there is no separate persisted balance/loss-basket state
+    to keep in sync — it's derived fresh, the same way, every time.
+    """
+    base_trade = float(money["base_trade_amount"])
+    max_trade_amount = float(money["max_trade_amount"])
+    dynamic_mode = bool(money["dynamic_mode"])
+    fixed_recovery_pct = float(money["recovery_percent"])
+
+    trades = trades_from_db_rows(db_rows)
+    loss_basket = run_simulation(trades, money)["summary"]["final_loss_basket"] if trades else 0.0
+
+    recovery_pct = _recovery_pct_for(loss_basket, base_trade, dynamic_mode, fixed_recovery_pct)
+    recovery_addon = loss_basket * recovery_pct
+    return min(base_trade + recovery_addon, max_trade_amount)

@@ -19,6 +19,7 @@ import chart_builder as chartb
 import polymarket_api
 import orderbook_api
 import candidate_manager
+import money_management as mm
 import trade_engine
 import trade_db
 from engine_state import state
@@ -438,11 +439,22 @@ def _tick_tab3() -> None:
             no_book = orderbook_api.fetch_order_book(candidate.no_token_id)
             snap = trade_engine.record_candidate_snapshot(candidate, yes_book, no_book, settings)
             if snap["decision"] == "BUY":
-                trade = trade_engine.enter_trade(candidate, snap, settings)
+                # Every real trade's stake is sized by Tab 6's Money Management
+                # settings, never a flat number — same sizing formula Tab 6
+                # replays historically, evaluated live against the loss basket
+                # left behind by every trade settled so far (see
+                # money_management.next_trade_amount's docstring for why this
+                # needs no separately-tracked balance/loss-basket state).
+                with state.lock:
+                    mm_settings = dict(state.mm_settings)
+                live_stake = mm.next_trade_amount(trade_db.fetch_all_trades(), mm_settings)
+                entry_settings = {**settings, "stake": live_stake}
+
+                trade = trade_engine.enter_trade(candidate, snap, entry_settings)
                 slot["trade"] = trade
-                log.info("[Tab3] TRADE OPENED candle=%s (%s) side=%s mode=%s entry_price=%.3f reason=%r",
+                log.info("[Tab3] TRADE OPENED candle=%s (%s) side=%s mode=%s entry_price=%.3f stake=$%.2f (money-management) reason=%r",
                           candidate.signal_time, time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)),
-                          trade.selected_side, trade.entry_mode, trade.entry_price, trade.entry_reason)
+                          trade.selected_side, trade.entry_mode, trade.entry_price, live_stake, trade.entry_reason)
             else:
                 log.debug("[Tab3] Candidate candle=%s still OBSERVING — decision=%s mode=%s price=%.3f reason=%r",
                            candidate.signal_time, snap["decision"], snap["mode"], snap["selected_price"], snap["reason"])
