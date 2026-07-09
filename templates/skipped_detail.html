@@ -23,6 +23,14 @@
 <h2 class="section">Polymarket Contract</h2>
 <p>Tried on: <a href="{{ market_url }}" target="_blank" rel="noopener">{{ row.market_slug }}</a></p>
 
+<h2 class="section">Timing Breakdown</h2>
+<div class="table-scroll"><table class="data-table"><tbody>
+  <tr><th>Window opened</th><td>{{ signal_time_str }}</td></tr>
+  <tr><th>Candidate created</th><td>{{ created_at_str }}{% if created_lag is not none %} ({{ "%+.0f"|format(created_lag) }}s after window open){% endif %}</td></tr>
+  <tr><th>Skipped at</th><td>{{ "%.0f"|format(seconds_late) if seconds_late is not none else "—" }}s after window open</td></tr>
+</tbody></table></div>
+<p class="caption">If "Candidate created" is close to 0s, the signal was detected on time but something delayed processing it afterward. If it's close to the skip time above, detection itself was late.</p>
+
 <h2 class="section">Why It Was Skipped</h2>
 <p>The window opened at <strong>{{ signal_time_str }}</strong> and no order had been placed by
   <strong>{{ "%.0f"|format(seconds_late) if seconds_late is not none else "—" }} seconds</strong> later —

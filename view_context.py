@@ -468,9 +468,12 @@ def build_skipped_detail_context(candidate_id: int) -> dict:
     row = trade_db.fetch_candidate(candidate_id)
     if row is None or row["status"] != "SKIPPED_LATE":
         return {"found": False}
+    created_lag = (row["created_at"] - row["signal_time"]) if row["created_at"] else None
     return {
         "found": True, "row": row,
         "signal_time_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["signal_time"])),
+        "created_at_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["created_at"])) if row["created_at"] else "—",
+        "created_lag": created_lag,
         "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{row['market_slug']}",
         "seconds_late": row["skip_seconds_late"],
         "entry_deadline_sec": config.TAB3_ENTRY_DEADLINE_SEC,
