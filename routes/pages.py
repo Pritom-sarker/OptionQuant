@@ -54,6 +54,12 @@ def trade_detail_page(request: Request, trade_id: int):
     return templates.TemplateResponse(request, "trade_detail.html", ctx)
 
 
+@router.get("/tab5/skipped/{candidate_id}")
+def skipped_detail_page(request: Request, candidate_id: int):
+    ctx = {"request": request, "active_tab": "tab5", **vc.build_skipped_detail_context(candidate_id)}
+    return templates.TemplateResponse(request, "skipped_detail.html", ctx)
+
+
 @router.get("/tab6")
 def tab6_page(request: Request):
     ctx = {"request": request, "active_tab": "tab6", **vc.build_money_management_context()}

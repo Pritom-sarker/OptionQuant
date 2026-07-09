@@ -34,7 +34,7 @@
       <td>{{ t.entry_price }}</td><td>{{ t.exit_price }}</td><td>{{ t.pnl }}</td>
       <td><span class="badge {{ 'green' if t.result=='WIN' else ('red' if t.result=='LOSS' else 'neutral') }}">{{ t.result }}</span></td>
       <td>{{ t.status }}</td>
-      <td>{% if t.kind == "trade" %}<a href="/tab5/trade/{{ t.id }}">{{ t.icon }} Details</a>{% else %}{{ t.icon }} —{% endif %}</td>
+      <td>{% if t.kind == "trade" %}<a href="/tab5/trade/{{ t.id }}">{{ t.icon }} Details</a>{% else %}<a href="/tab5/skipped/{{ t.id }}">{{ t.icon }} Details</a>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>

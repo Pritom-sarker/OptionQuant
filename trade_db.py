@@ -119,6 +119,7 @@ _MIGRATIONS = [
     ("trades", "depth_chart_path", "TEXT"),
     ("trades", "pnl_chart_path", "TEXT"),
     ("trades", "report_text", "TEXT"),
+    ("candidates", "skip_seconds_late", "REAL"),
 ]
 
 
@@ -173,9 +174,32 @@ def insert_candidate(candidate: dict) -> int:
         return cur.lastrowid
 
 
+def candidate_exists_for_signal(signal_time: int) -> bool:
+    """
+    True if ANY candidate — active, entered, expired, or skipped — already
+    exists for this exact signal_time. This is the permanent dedup check;
+    checking only the in-memory state.tab3_slots (as background_worker used
+    to) isn't enough: once a candidate is dropped from slots (settled,
+    expired, or skipped-late), it vanishes from that list, but Tab 1's
+    prediction for that same window keeps reading GREEN/RED for minutes
+    afterward (it only changes once the real candle actually closes) —
+    without this DB-backed check, every tick in between would create
+    ANOTHER candidate for the same signal, forever.
+    """
+    with get_connection() as conn:
+        row = conn.execute("SELECT 1 FROM candidates WHERE signal_time = ? LIMIT 1", (signal_time,)).fetchone()
+        return row is not None
+
+
 def update_candidate_status(candidate_id: int, status: str) -> None:
     with get_connection() as conn:
         conn.execute("UPDATE candidates SET status = ? WHERE id = ?", (status, candidate_id))
+
+
+def mark_candidate_skipped_late(candidate_id: int, seconds_late: float) -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE candidates SET status = 'SKIPPED_LATE', skip_seconds_late = ? WHERE id = ?",
+                     (seconds_late, candidate_id))
 
 
 def update_candidate_chart_path(candidate_id: int, chart_path: str) -> None:

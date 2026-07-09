@@ -207,7 +207,7 @@ def skip_late_candidate(candidate: TradeCandidate) -> None:
         candidate.last_reason = (f"Window opened {seconds_late:.0f}s ago with no entry yet (entry deadline is "
                                   f"{config.TAB3_ENTRY_DEADLINE_SEC}s after open) — skipped to avoid a stale price. "
                                   f"No stake risked, no PnL.")
-        trade_db.update_candidate_status(candidate.db_id, "SKIPPED_LATE")
+        trade_db.mark_candidate_skipped_late(candidate.db_id, seconds_late)
 
 
 def _decide_entry(candidate: TradeCandidate, calc: dict, settings: dict) -> tuple[Optional[str], str, str]:

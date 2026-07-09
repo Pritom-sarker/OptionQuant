@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Skipped Signal #{{ row.id if found else '?' }} — Details{% endblock %}
+{% block content %}
+{% if not found %}
+<h1 class="page-title">Skipped signal not found</h1>
+<p class="caption">No skipped-late candidate with that ID exists. <a href="/tab5">&larr; Back to Trade Stats</a></p>
+{% else %}
+<h1 class="page-title">⏭️ Skipped Signal #{{ row.id }} — {{ row.prediction }} — Entry Skipped (Too Late)</h1>
+<p class="caption"><a href="/tab5">&larr; Back to Trade Stats &amp; Documentation</a></p>
+
+<h2 class="section">Signal Candle</h2>
+<div class="table-scroll"><table class="data-table"><tbody>
+  <tr><th>Signal Time (window open)</th><td>{{ signal_time_str }}</td></tr>
+  <tr><th>Direction</th><td>{{ row.prediction }}</td></tr>
+  <tr><th>Selected Side</th><td>{{ row.selected_side }}</td></tr>
+  <tr><th>Open/High/Low/Close</th><td>{{ row.signal_open }} / {{ row.signal_high }} / {{ row.signal_low }} / {{ row.signal_close }}</td></tr>
+  <tr><th>ATR / Body / Body-ATR</th><td>{{ row.atr }} / {{ row.body }} / {{ row.body_atr_ratio }}</td></tr>
+  <tr><th>Reason</th><td>{{ row.reason }}</td></tr>
+  <tr><th>Filters</th><td>F1={{ row.f1_trend }} F2={{ row.f2_volatility }} F3={{ row.f3_close_location }} F4={{ row.f4_continuation }} F5={{ row.f5_anti_chop }}</td></tr>
+</tbody></table></div>
+
+<h2 class="section">Polymarket Contract</h2>
+<p>Tried on: <a href="{{ market_url }}" target="_blank" rel="noopener">{{ row.market_slug }}</a></p>
+
+<h2 class="section">Why It Was Skipped</h2>
+<p>The window opened at <strong>{{ signal_time_str }}</strong> and no order had been placed by
+  <strong>{{ "%.0f"|format(seconds_late) if seconds_late is not none else "—" }} seconds</strong> later —
+  past the {{ entry_deadline_sec }}s entry deadline, so the signal was skipped instead of being entered at a stale price.</p>
+<p><strong>No stake was risked, no PnL — this trade never happened.</strong></p>
+{% endif %}
+{% endblock %}

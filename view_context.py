@@ -457,6 +457,26 @@ def build_money_management_context() -> dict:
     }
 
 
+def build_skipped_detail_context(candidate_id: int) -> dict:
+    """
+    The skipped-late candidate detail page — what a Tab 5 "SKIPPED" row's
+    Details link opens. Distinct from build_trade_detail_context: a skipped
+    candidate never became a trade (no entry, no order-book snapshots to
+    report), just the signal that fired, the Polymarket contract it tried,
+    and how late it was caught.
+    """
+    row = trade_db.fetch_candidate(candidate_id)
+    if row is None or row["status"] != "SKIPPED_LATE":
+        return {"found": False}
+    return {
+        "found": True, "row": row,
+        "signal_time_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["signal_time"])),
+        "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{row['market_slug']}",
+        "seconds_late": row["skip_seconds_late"],
+        "entry_deadline_sec": config.TAB3_ENTRY_DEADLINE_SEC,
+    }
+
+
 def build_trade_detail_context(trade_id: int) -> dict:
     """The full per-trade report page — what the Tab 5 table's Details link opens."""
     row = trade_db.fetch_trade(trade_id)

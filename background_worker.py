@@ -403,9 +403,16 @@ def _tick_tab3() -> None:
     # there's any delay before the candidate gets created).
     if predicted_label in ("GREEN", "RED") and tab1_prediction is not None and market is not None:
         signal_time = int(tab1_prediction["time"])
-        duplicate = any(s["candidate"].signal_time == signal_time for s in slots)
+        # Checked against the DB, not just the currently-active slots list —
+        # see trade_db.candidate_exists_for_signal's docstring for why a
+        # memory-only check lets a dropped (settled/expired/skipped-late)
+        # candidate's signal get re-created every tick until the real candle
+        # closes, which is what caused dozens of duplicate SKIPPED_LATE rows
+        # for one window before this fix.
+        duplicate = (any(s["candidate"].signal_time == signal_time for s in slots)
+                     or trade_db.candidate_exists_for_signal(signal_time))
         if duplicate:
-            log.debug("[Tab3] Signal candle=%s already has an order this cycle — skipping duplicate.", signal_time)
+            log.debug("[Tab3] Signal candle=%s already has a candidate — skipping duplicate.", signal_time)
         else:
             target_market = polymarket_api.fetch_market_for_window(signal_time)
             if target_market is None:
