@@ -327,11 +327,19 @@ def _pattern_phrase(mode: str, d: int, body: float, atr: float) -> str:
 def evaluate_signal_results(df: pd.DataFrame, pat_dir: pd.Series, act_ok: pd.Series) -> pd.Series:
     """
     For every candle N with a confirmed signal, evaluate that signal against
-    candle N+1 (the candle it predicts) — never against candle N itself:
-      GREEN/UP   wins if close[N+1] > close[N]
-      RED/DOWN   wins if close[N+1] < close[N]
+    candle N+1's OWN body (open vs close) — never against candle N itself,
+    and never against N+1's close relative to N's close:
+      GREEN/UP   wins if close[N+1] > open[N+1]
+      RED/DOWN   wins if close[N+1] < open[N+1]
+      close[N+1] == open[N+1] (exact tie) -> LOSS for the side that needed
+        a strict move — vanishingly rare, but Polymarket itself has to break
+        the tie somehow, so this can never register as a win either way.
     Returns "WIN" / "LOSS" / "PENDING" per row, or None where there was no
-    signal.
+    signal. This matches trade_engine.settle_at_expiry exactly — a real
+    trade resolves on N+1's own open-vs-close, so Tab 1's displayed
+    WIN/LOSS must use the identical rule or the two can silently disagree
+    on the same candle (N+1 can look bearish on its own body yet still
+    have closed above N's close, or vice versa).
 
     Candle N+1's CLOSE price is only used once N+1 has actually closed —
     its close timestamp must be in the past. btc_price_api.py already drops
@@ -341,6 +349,7 @@ def evaluate_signal_results(df: pd.DataFrame, pat_dir: pd.Series, act_ok: pd.Ser
     behavior).
     """
     n = len(df)
+    open_ = df["open"].values
     close = df["close"].values
     candle_time = df["time"].values
     now = time.time()
@@ -355,11 +364,14 @@ def evaluate_signal_results(df: pd.DataFrame, pat_dir: pd.Series, act_ok: pd.Ser
         if candle_time[i + 1] > now:
             results[i] = "PENDING"   # next candle's close timestamp hasn't arrived yet
             continue
-        next_close = close[i + 1]
-        if d == 1:
-            results[i] = "WIN" if next_close > close[i] else "LOSS"
-        elif d == -1:
-            results[i] = "WIN" if next_close < close[i] else "LOSS"
+        next_open, next_close = open_[i + 1], close[i + 1]
+        if next_close > next_open:
+            next_direction = 1
+        elif next_close < next_open:
+            next_direction = -1
+        else:
+            next_direction = 0   # tie -> never a win for either side
+        results[i] = "WIN" if d == next_direction else "LOSS"
     return pd.Series(results, index=df.index)
 
 
@@ -443,7 +455,7 @@ def compute_full_stats(df: pd.DataFrame, pat_dir: pd.Series, act_ok: pd.Series,
 
 
 def build_reason(mode: str, d: int, act_ok: bool, filt_status: dict[str, str], body: float, atr: float,
-                  result: str | None = None, next_close: float | None = None, signal_close: float | None = None) -> str:
+                  result: str | None = None, next_close: float | None = None, next_open: float | None = None) -> str:
     if d == 0:
         return "NO SIGNAL: No valid candle pattern detected."
 
@@ -461,7 +473,7 @@ def build_reason(mode: str, d: int, act_ok: bool, filt_status: dict[str, str], b
     side_map = {(1, "WIN"): "above", (1, "LOSS"): "below",
                 (-1, "WIN"): "below", (-1, "LOSS"): "above"}
     side = side_map.get((d, result), "at")
-    return f"{lead} Next candle closed {side} signal close ({signal_close:.2f}), so result = {result}."
+    return f"{lead} Next candle closed {side} its own open ({next_open:.2f}), so result = {result}."
 
 
 def build_signal_table(df: pd.DataFrame, per_pattern: dict, combined_dir: pd.Series,
@@ -504,11 +516,11 @@ def build_signal_table(df: pd.DataFrame, per_pattern: dict, combined_dir: pd.Ser
         result = results.loc[i]  # WIN / LOSS / PENDING / None
 
         next_close = df["close"].iloc[pos + 1] if pos + 1 < len(df) else None
-        signal_close = df["close"].loc[i]
+        next_open = df["open"].iloc[pos + 1] if pos + 1 < len(df) else None
 
         reason = build_reason(mode or "no pattern enabled", d, predicted, filt_status, body_val,
                                atr_val if pd.notna(atr_val) else 0.0,
-                               result=result, next_close=next_close, signal_close=signal_close)
+                               result=result, next_close=next_close, next_open=next_open)
 
         rows.append({
             "time": df["time"].loc[i],
