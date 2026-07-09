@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Tab 6 — Money Management{% endblock %}
+{% block content %}
+<h1 class="page-title">Tab 6 — Money Management Simulator</h1>
+<p class="caption">Replays every real settled trade from Tab 3/Tab 5, oldest to newest, through a loss-basket
+  recovery model — same sizing/recovery logic as the pine_strategy_simulator project's Money Management tab,
+  except each win pays out at <strong>that trade's own dynamic profit factor</strong> (from its real entry
+  price) instead of a static profit factor of 1.
+  <span class="live-status" id="live-status-tab6"><span class="live-dot" id="live-dot-tab6"></span><span id="live-text-tab6">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab6">last update: —</span></span>
+</p>
+
+<h2 class="section">Money Management Settings</h2>
+<form class="settings-form" method="post" action="/settings/money_management">
+  <div class="field"><label>Starting Balance ($)</label><input type="number" step="1" min="1" name="starting_balance" value="{{ settings.starting_balance }}"></div>
+  <div class="field"><label>Base Trade Amount ($)</label><input type="number" step="0.1" min="0.01" name="base_trade_amount" value="{{ settings.base_trade_amount }}"></div>
+  <div class="field"><label>Max Trade Amount Cap ($)</label><input type="number" step="1" min="0.01" name="max_trade_amount" value="{{ settings.max_trade_amount }}"></div>
+  <div class="field checkbox"><input type="checkbox" name="dynamic_mode" id="mm_dynamic" {{ "checked" if settings.dynamic_mode else "" }}><label for="mm_dynamic">Dynamic recovery % (overrides fixed % below)</label></div>
+  <div class="field"><label>Fixed Recovery % (used when dynamic is off)</label><input type="number" step="1" min="0" max="100" name="recovery_percent" value="{{ (settings.recovery_percent * 100)|round(1) }}"></div>
+  <div class="field"><label>Win Split → Loss Basket Recovery (%)</label><input type="number" step="1" min="0" max="100" name="profit_split_recovery_pct" value="{{ (settings.profit_split_recovery_pct * 100)|round(1) }}"></div>
+  <div class="field">
+    <label>Loss Basket Reset</label>
+    <select name="reset_mode">
+      <option value="never" {{ "selected" if settings.reset_mode == "never" else "" }}>Never reset</option>
+      <option value="on_zero" {{ "selected" if settings.reset_mode == "on_zero" else "" }}>Reset when loss basket becomes 0</option>
+      <option value="after_n_wins" {{ "selected" if settings.reset_mode == "after_n_wins" else "" }}>Reset after N winning trades</option>
+    </select>
+  </div>
+  <div class="field"><label>Reset after N wins</label><input type="number" step="1" min="1" name="reset_after_n_wins" value="{{ settings.reset_after_n_wins }}"></div>
+  <div class="caption" style="grid-column: 1 / -1;">Dynamic mode: recovery % = 25% while loss basket &lt;= 5x base trade, 15% &lt;= 10x, 10% &lt;= 20x, 5% beyond that — the fixed % above is ignored.</div>
+  <div class="form-actions"><button type="submit">Apply Money Management Settings</button></div>
+</form>
+
+<div id="tab6-live">
+  {% include "partials/tab6_live.html" %}
+</div>
+
+<script>
+  startPolling("/api/tab6/live", "tab6-live", 2000, "tab6");
+  startImageRefresh(30000);
+</script>
+{% endblock %}

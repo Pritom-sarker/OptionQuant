@@ -9,6 +9,7 @@ import time
 import pandas as pd
 
 import config
+import money_management as mm
 import orderbook_engine as obe
 import trade_db
 import trade_engine
@@ -406,6 +407,39 @@ def build_tab5_context() -> dict:
             "return_pct": t["return_pct"],
         })
     return {"has_trades": True, "stats": stats, "rows": rows}
+
+
+def build_money_management_context() -> dict:
+    """
+    Tab 6 — replays trade_db's real settled trades (oldest -> newest) through
+    money_management.run_simulation() using the currently-applied mm
+    settings. Recomputed fresh on every call (like Tab 5) rather than cached
+    — trade counts here are small enough that replaying the whole history
+    every poll is cheap, and it guarantees the balance always reflects the
+    latest settled trade plus whatever settings are currently applied.
+    """
+    settings = dict(state.mm_settings)
+    all_trades = list(reversed(trade_db.fetch_all_trades()))   # fetch_all_trades() is newest-first; replay needs oldest-first
+    if not all_trades:
+        return {"has_trades": False, "settings": settings}
+
+    sim_trades = [
+        {"time": t["entry_time"], "result": t["final_result"], "entry_price": t["entry_price"],
+         "direction": "YES" if t["direction"] == 1 else "NO"}
+        for t in all_trades
+    ]
+    result = mm.run_simulation(sim_trades, settings)
+    hourly = mm.hourly_balance_curve(result["trade_log"], settings["starting_balance"])
+
+    summary = result["summary"]
+    trade_log = result["trade_log"]
+    for row in trade_log:
+        row["time_str"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["time"]))
+    return {
+        "has_trades": True, "settings": settings, "summary": summary,
+        "hourly": hourly, "curves": result["curves"],
+        "trade_log": list(reversed(trade_log))[:100],   # newest first for display, capped like Tab 5's recent list
+    }
 
 
 def build_trade_detail_context(trade_id: int) -> dict:

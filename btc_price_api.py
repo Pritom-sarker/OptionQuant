@@ -109,3 +109,40 @@ def fetch_btcusd_candles(limit: Optional[int] = None) -> list[dict]:
         print(f"[btc_price_api] Coinbase fallback failed: {e}")
 
     return []
+
+
+def fetch_forming_btcusd_candle() -> Optional[dict]:
+    """
+    Return the currently in-progress (not yet closed) BTC/USD 5-minute
+    candle's live, still-moving OHLC — the exact bucket fetch_btcusd_candles
+    always drops (see _drop_forming_candle's docstring for why that guard
+    exists for the normal, closed-candle-only pipeline).
+
+    Used only by the opt-in Early Entry feature: it deliberately trades away
+    some certainty (the final seconds before close can still move price) for
+    the ability to detect a matching pattern before the candle finishes,
+    instead of only after. Returns None if the last bucket has already
+    closed by the time this is read (race right at the boundary) or on any
+    fetch failure — callers should just skip that tick, never fabricate data.
+    """
+    try:
+        r = _SESSION.get(
+            config.BINANCE_KLINES_URL,
+            params={"symbol": config.BINANCE_SYMBOL, "interval": "5m", "limit": 1},
+            timeout=config.REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        rows = r.json()
+        if not rows:
+            return None
+        row = rows[-1]
+        close_time = int(row[6]) // 1000
+        if close_time <= time.time():
+            return None
+        return {
+            "time": close_time, "open": float(row[1]), "high": float(row[2]),
+            "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]),
+        }
+    except Exception as e:
+        print(f"[btc_price_api] forming-candle fetch failed: {e}")
+        return None

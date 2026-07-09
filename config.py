@@ -67,10 +67,39 @@ F5_ANTI_CHOP_ATR_MULT = 0.15
 DEFAULT_MIN_SIGNALS = 10   # matches Pine's i_min_sigs — "Min signals for edge detection"
 MINTICK = 0.01             # matches Pine's syminfo.mintick floor for BTC/USDT-scale prices
 
+# Early Entry (opt-in, OFF by default): normally a pattern is only ever
+# evaluated once its candle has fully closed (see btc_price_api's
+# _drop_forming_candle). When this is on, the last DEFAULT_TAB1_EARLY_ENTRY_
+# LEAD_SEC seconds before close also get checked against the *forming*
+# candle's still-moving OHLC — if the pattern already matches, that's used
+# as an early signal so Tab 3 can place the next window's order without
+# waiting for the close + the normal detection cycle. Trades entered off an
+# early signal are never cancelled/exited if the true close later disagrees
+# with the provisional one — they ride to expiry like any other trade; only
+# a log line records the mismatch.
+DEFAULT_TAB1_EARLY_ENTRY_ENABLED  = False
+DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC = 10
+
 # ─── Timing ────────────────────────────────────────────────────────────────
 REFRESH_MS = 60_000   # dashboard + candle refresh, once a minute
 LAST_N_CANDLES_TABLE = 10   # rows shown in the last-candles signal table
 CHART_VISIBLE_CANDLES = 30  # chart is hard-sliced to exactly this many closed candles
+
+# How often background_worker's tab1_loop re-fetches candles and re-checks
+# for a freshly-closed candle's signal. This directly gates how late an
+# Immediate Entry trade can land after the real candle open — a signal can
+# only be noticed on the next tick after the candle actually closes, so this
+# interval is the single biggest lever on entry-price slippage for Immediate
+# Entry mode. Was 15s (worst case ~15s stale detection, stacked with
+# tab3_loop's idle interval below into ~25s of total lag); keep this low.
+TAB1_POLL_INTERVAL_SEC = 2
+
+# How often background_worker's tab3_loop ticks while no candidate/trade is
+# active (the common state — most ticks find nothing to do). Was 10s, which
+# meant a brand-new signal from tab1_loop could sit unnoticed for up to 10
+# more seconds even after being detected. Kept low for the same
+# Immediate-Entry-latency reason as TAB1_POLL_INTERVAL_SEC above.
+TAB3_IDLE_POLL_INTERVAL_SEC = 2
 
 # ─── Historical backfill scan (runs once on app startup, not every refresh) ─
 BACKFILL_CANDLES_TARGET = 1000
@@ -126,3 +155,21 @@ DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE = 0.10    # Mode 1 "ask depth stable" — ma
 DEFAULT_TAB3_IMMEDIATE_MODE = True
 
 TAB3_SNAPSHOT_HISTORY_MAX = 2000   # bounded in-memory rolling history per candidate/trade
+
+# ─── Tab 6: Money Management Simulator ──────────────────────────────────────
+# Ported from pine_strategy_simulator/money_management.py's "Money Management
+# Simulator" tab — identical sizing/loss-basket/recovery formulas, same
+# settings. Only one deliberate change: that version assumed every WIN pays
+# out at a static profit factor of 1 (gross_win = trade_amount flat, i.e. as
+# if every contract were bought at exactly $0.50). This version replays the
+# app's own REAL settled trades (trade_db), so it uses each trade's own
+# actual entry price via orderbook_engine.profit_factor() instead — a $0.30
+# entry pays a different multiple than a $0.60 one, same as real money would.
+DEFAULT_MM_STARTING_BALANCE        = 1000.0
+DEFAULT_MM_BASE_TRADE_AMOUNT       = 1.0
+DEFAULT_MM_MAX_TRADE_AMOUNT        = 10.0
+DEFAULT_MM_RECOVERY_PERCENT        = 0.10   # 10% — used only when dynamic_mode is off
+DEFAULT_MM_DYNAMIC_MODE            = False
+DEFAULT_MM_PROFIT_SPLIT_RECOVERY   = 0.50   # 50% of each win's profit pays down the loss basket
+DEFAULT_MM_RESET_MODE              = "never"   # "never" | "on_zero" | "after_n_wins"
+DEFAULT_MM_RESET_AFTER_N_WINS      = 5

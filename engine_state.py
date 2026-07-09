@@ -56,11 +56,17 @@ class AppState:
             "atr_sma_length": config.DEFAULT_ATR_SMA_LENGTH,
             "min_signals": config.DEFAULT_MIN_SIGNALS,
             "show_ema": config.DEFAULT_SHOW_EMA, "show_signals": config.DEFAULT_SHOW_SIGNALS,
+            "early_entry_enabled": config.DEFAULT_TAB1_EARLY_ENTRY_ENABLED,
+            "early_entry_lead_sec": config.DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC,
         }
         self.tab1_prediction: Optional[dict] = None
         self.backfill_rows: list = []
         self.backfill_total: int = 0
         self.live_active_prediction: Optional[dict] = None
+        # Provisional signal built from the still-forming candle (Early Entry
+        # only) — see background_worker._tick_tab1_early. None whenever Early
+        # Entry is off or no provisional signal is currently pending.
+        self.tab1_early_prediction: Optional[dict] = None
         self.tab1_last_refresh: float = 0.0
         self.tab1_df = None            # last computed candle DataFrame (for the candle chart route)
         self.tab1_computed: Optional[dict] = None   # pat_dir/filters/act_ok/results/stats bundle
@@ -97,19 +103,37 @@ class AppState:
         self.tab3_last_chart_refresh: float = 0.0   # gates chart image regeneration only — values are always live
         self.tab3_market_ok: bool = False
 
+        # Tab 6 — Money Management Simulator (replays trade_db's real settled
+        # trades through the same sizing/loss-basket formulas as
+        # pine_strategy_simulator's Money Management tab — see money_management.py)
+        self.mm_settings: dict = {
+            "starting_balance": config.DEFAULT_MM_STARTING_BALANCE,
+            "base_trade_amount": config.DEFAULT_MM_BASE_TRADE_AMOUNT,
+            "max_trade_amount": config.DEFAULT_MM_MAX_TRADE_AMOUNT,
+            "recovery_percent": config.DEFAULT_MM_RECOVERY_PERCENT,
+            "dynamic_mode": config.DEFAULT_MM_DYNAMIC_MODE,
+            "profit_split_recovery_pct": config.DEFAULT_MM_PROFIT_SPLIT_RECOVERY,
+            "reset_mode": config.DEFAULT_MM_RESET_MODE,
+            "reset_after_n_wins": config.DEFAULT_MM_RESET_AFTER_N_WINS,
+        }
+
         saved = _load_saved_settings()
         if "tab1_settings" in saved:
             self.tab1_settings.update(saved["tab1_settings"])
         if "tab3_settings" in saved:
             self.tab3_settings.update(saved["tab3_settings"])
+        if "mm_settings" in saved:
+            self.mm_settings.update(saved["mm_settings"])
 
 
 def save_settings() -> None:
-    """Persists the current tab1/tab3 settings to disk — called after every
-    POST /settings/tab1 or /settings/tab3 so a local restart picks them back
-    up (see the module docstring for the Railway-redeploy caveat)."""
+    """Persists the current tab1/tab3/mm settings to disk — called after every
+    POST /settings/tab1, /settings/tab3, or /settings/money_management so a
+    local restart picks them back up (see the module docstring for the
+    Railway-redeploy caveat)."""
     with state.lock:
-        payload = {"tab1_settings": state.tab1_settings, "tab3_settings": state.tab3_settings}
+        payload = {"tab1_settings": state.tab1_settings, "tab3_settings": state.tab3_settings,
+                   "mm_settings": state.mm_settings}
     try:
         with open(SETTINGS_PATH, "w") as f:
             json.dump(payload, f, indent=2)

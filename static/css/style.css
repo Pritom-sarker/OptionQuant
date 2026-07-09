@@ -336,3 +336,37 @@ button:hover, input[type="submit"]:hover { filter: brightness(1.1); }
   box-shadow: none;
   animation: none;
 }
+
+/* ── Balance banner (Tab 6) ──────────────────────────────────────────────── */
+.balance-banner {
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 20px;
+  border-width: 2px;
+  border-style: solid;
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.balance-banner .balance-label {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.balance-banner .balance-value {
+  font-family: var(--font-mono);
+  font-size: 40px;
+  font-weight: 800;
+  animation: balancePop 0.5s ease;
+}
+.balance-banner .balance-delta {
+  font-size: 16px;
+  font-weight: 600;
+}
+@keyframes balancePop {
+  0% { transform: scale(0.94); opacity: 0.5; }
+  60% { transform: scale(1.03); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}

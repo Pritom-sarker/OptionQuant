@@ -1,0 +1,65 @@
+{% import "partials/_macros.html" as m %}
+
+{% if not has_trades %}
+<div class="callout idle">No settled trades yet — Tab 6 replays real settled trades from Tab 3/Tab 5, so it has nothing to show until at least one trade closes.</div>
+{% else %}
+
+{% set profit = summary.ending_balance >= summary.starting_balance %}
+<div class="balance-banner"
+     style="background: var(--{{ 'green-bg' if profit else 'red-bg' }});
+            border-color: var(--{{ 'green' if profit else 'red' }});">
+  <div>
+    <div class="balance-label">Current Balance</div>
+    <div class="balance-value" style="color: var(--{{ 'green' if profit else 'red' }});">${{ "%.2f"|format(summary.ending_balance) }}</div>
+  </div>
+  <div class="balance-delta" style="color: var(--{{ 'green' if profit else 'red' }});">
+    {{ "%+.2f"|format(summary.net_pnl) }} ({{ "%+.2f"|format(summary.roi_pct) }}%) since ${{ "%.2f"|format(summary.starting_balance) }} start
+  </div>
+</div>
+
+{% if summary.bankrupt %}
+<div class="callout" style="border-left-color: var(--red);">
+  <strong>ACCOUNT WIPED OUT — 100%+ drawdown.</strong> Balance reached ${{ "%.2f"|format(summary.ending_balance) }}
+  on trade #{{ summary.bankrupt_trade_num }}. Replay stopped here — reduce base trade amount or raise starting balance and re-apply settings.
+</div>
+{% endif %}
+
+<div class="metric-grid">
+  {{ m.metric("ROI %", "%.2f%%"|format(summary.roi_pct), value_class=("green" if profit else "red")) }}
+  {{ m.metric("Win Rate", "%.1f%%"|format(summary.win_rate)) }}
+  {{ m.metric("Total Trades", summary.total_trades) }}
+  {{ m.metric("Max Consec. Losses", summary.max_consecutive_losses) }}
+  {{ m.metric("Loss Pool (current)", "$%.2f"|format(summary.final_loss_basket), value_class="red") }}
+  {{ m.metric("Max Drawdown", "%.2f%%"|format(summary.max_drawdown_pct)) }}
+</div>
+
+<h2 class="section">Account Balance — Hourly</h2>
+<img data-live="/charts/tab6/balance.png" src="/charts/tab6/balance.png" alt="Account balance over time" style="max-width: 100%;">
+
+<h2 class="section">Loss Pool (Loss Basket)</h2>
+<img data-live="/charts/tab6/loss_basket.png" src="/charts/tab6/loss_basket.png" alt="Loss basket over time" style="max-width: 100%;">
+
+<h2 class="section">Trade Log (most recent first)</h2>
+<div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th>#</th><th>Time</th><th>Side</th><th>Result</th><th>Entry Price</th><th>Profit Factor</th>
+    <th>Trade Amount</th><th>Balance After</th><th>Loss Basket After</th></tr></thead>
+  <tbody>
+    {% for t in trade_log %}
+    <tr>
+      <td>{{ t.trade_num }}</td>
+      <td>{{ t.time_str }}</td>
+      <td>{{ t.direction }}</td>
+      <td><span class="badge {{ 'green' if t.result=='WIN' else 'red' }}">{{ t.result }}</span></td>
+      <td>{{ "%.3f"|format(t.entry_price) if t.entry_price is not none else "—" }}</td>
+      <td>{{ "%.2fx"|format(t.profit_factor) if t.profit_factor is not none else "—" }}</td>
+      <td>${{ "%.2f"|format(t.trade_amount) }}</td>
+      <td>${{ "%.2f"|format(t.balance_after) }}</td>
+      <td>${{ "%.2f"|format(t.loss_basket_after) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% endif %}

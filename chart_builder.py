@@ -574,6 +574,52 @@ def build_tab3_pnl_chart(trade_snapshots: list[dict]) -> plt.Figure:
     return fig
 
 
+def build_mm_balance_chart(hourly: list[dict], starting_balance: float) -> plt.Figure:
+    """Tab 6 — account balance bucketed to the hour, with a starting-balance reference line."""
+    if not hourly:
+        return _empty_tab3_figure("Account Balance", figsize=(12, 4))
+
+    fig, ax = plt.subplots(figsize=(12, 4), dpi=100)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    times = [pd.to_datetime(h["hour"], unit="s") for h in hourly]
+    balances = [h["balance"] for h in hourly]
+    color = "#2e7d32" if balances[-1] >= starting_balance else "#c62828"
+
+    ax.plot(times, balances, color=color, linewidth=2.0, marker="o", markersize=2.5)
+    ax.axhline(starting_balance, color="#888888", linestyle="--", linewidth=1.0, label="Starting balance")
+    ax.set_ylabel("Balance ($)")
+    ax.set_title("Account Balance — Hourly", fontsize=13, fontweight="bold")
+    ax.grid(True, color="#dddddd", linewidth=0.6)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    return fig
+
+
+def build_mm_loss_basket_chart(curves: dict) -> plt.Figure:
+    """Tab 6 — outstanding loss basket ("loss pool") after every replayed trade."""
+    if not curves.get("time"):
+        return _empty_tab3_figure("Loss Basket", figsize=(12, 3.5))
+
+    fig, ax = plt.subplots(figsize=(12, 3.5), dpi=100)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    times = [pd.to_datetime(t, unit="s") for t in curves["time"]]
+    basket = curves["loss_basket"]
+
+    ax.plot(times, basket, color="#c62828", linewidth=1.8)
+    ax.fill_between(times, basket, 0, color="#c62828", alpha=0.15)
+    ax.set_ylabel("Loss Basket ($)")
+    ax.set_title("Loss Basket — After Each Trade", fontsize=13, fontweight="bold")
+    ax.grid(True, color="#dddddd", linewidth=0.6)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    return fig
+
+
 def build_tab3_candle_chart(df: pd.DataFrame, signal_time: int, direction: int = None,
                              limit_price: float = None, entry_price: float = None,
                              current_price: float = None, exit_price: float = None,

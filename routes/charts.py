@@ -14,6 +14,7 @@ from fastapi.responses import Response, FileResponse
 
 import config
 import chart_builder as chartb
+import view_context as vc
 from engine_state import state
 
 router = APIRouter(prefix="/charts")
@@ -109,3 +110,21 @@ def tab3_saved_file(path: str = Query(...)):
     if not real_path.startswith(chart_dir + os.sep) or not os.path.exists(real_path):
         raise HTTPException(404, "chart not found")
     return FileResponse(real_path, media_type="image/png")
+
+
+@router.get("/tab6/balance.png")
+def tab6_balance():
+    ctx = vc.build_money_management_context()
+    if not ctx.get("has_trades"):
+        return Response(content=_placeholder(), media_type="image/png")
+    fig = chartb.build_mm_balance_chart(ctx["hourly"], ctx["settings"]["starting_balance"])
+    return _matplotlib_png(fig)
+
+
+@router.get("/tab6/loss_basket.png")
+def tab6_loss_basket():
+    ctx = vc.build_money_management_context()
+    if not ctx.get("has_trades"):
+        return Response(content=_placeholder(), media_type="image/png")
+    fig = chartb.build_mm_loss_basket_chart(ctx["curves"])
+    return _matplotlib_png(fig)

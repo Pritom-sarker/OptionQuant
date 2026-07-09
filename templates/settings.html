@@ -35,6 +35,10 @@
   <div class="field checkbox"><input type="checkbox" name="show_ema" id="show_ema" {{ "checked" if tab1.show_ema else "" }}><label for="show_ema">Show EMA 20/50/200</label></div>
   <div class="field checkbox"><input type="checkbox" name="show_signals" id="show_signals" {{ "checked" if tab1.show_signals else "" }}><label for="show_signals">Show signal markers + WIN/LOSS</label></div>
 
+  <div class="caption" style="grid-column: 1 / -1;">Early Entry: checks the still-forming candle's live (not-yet-closed) body against the pattern in the last few seconds before it closes. If it already matches, Tab 3 can enter on it immediately instead of waiting for the close. Trades already entered off an early signal are never cancelled if the true close later disagrees — only a log line records the mismatch.</div>
+  <div class="field checkbox"><input type="checkbox" name="early_entry_enabled" id="early_entry_enabled" {{ "checked" if tab1.early_entry_enabled else "" }}><label for="early_entry_enabled">Enable Early Entry</label></div>
+  <div class="field"><label>Early Entry Lead Time (sec before close)</label><input type="number" name="early_entry_lead_sec" value="{{ tab1.early_entry_lead_sec }}" min="1" max="60"></div>
+
   <div class="form-actions"><button type="submit">Apply Tab 1 Settings</button></div>
 </form>
 

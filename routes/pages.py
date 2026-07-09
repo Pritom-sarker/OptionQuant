@@ -53,6 +53,30 @@ def trade_detail_page(request: Request, trade_id: int):
     return templates.TemplateResponse(request, "trade_detail.html", ctx)
 
 
+@router.get("/tab6")
+def tab6_page(request: Request):
+    ctx = {"request": request, "active_tab": "tab6", **vc.build_money_management_context()}
+    return templates.TemplateResponse(request, "tab6.html", ctx)
+
+
+@router.post("/settings/money_management")
+def settings_money_management(
+    starting_balance: float = Form(...), base_trade_amount: float = Form(...),
+    max_trade_amount: float = Form(...), recovery_percent: float = Form(...),
+    dynamic_mode: bool = Form(False), profit_split_recovery_pct: float = Form(...),
+    reset_mode: str = Form(...), reset_after_n_wins: int = Form(5),
+):
+    with state.lock:
+        state.mm_settings = {
+            "starting_balance": starting_balance, "base_trade_amount": base_trade_amount,
+            "max_trade_amount": max_trade_amount, "recovery_percent": recovery_percent / 100.0,
+            "dynamic_mode": dynamic_mode, "profit_split_recovery_pct": profit_split_recovery_pct / 100.0,
+            "reset_mode": reset_mode, "reset_after_n_wins": reset_after_n_wins,
+        }
+    save_settings()
+    return RedirectResponse(url="/tab6", status_code=303)
+
+
 @router.get("/settings")
 def settings_page(request: Request, saved: bool = False):
     with state.lock:
@@ -92,6 +116,8 @@ async def settings_tab1(request: Request):
             "atr_sma_length": int(form.get("atr_sma_length", config.DEFAULT_ATR_SMA_LENGTH)),
             "min_signals": int(form.get("min_signals", config.DEFAULT_MIN_SIGNALS)),
             "show_ema": checked("show_ema"), "show_signals": checked("show_signals"),
+            "early_entry_enabled": checked("early_entry_enabled"),
+            "early_entry_lead_sec": int(form.get("early_entry_lead_sec", config.DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC)),
         }
     save_settings()
     return RedirectResponse(url="/settings?saved=1", status_code=303)

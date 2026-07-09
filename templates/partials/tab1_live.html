@@ -6,7 +6,7 @@
      style="background: var(--{{ 'green-bg' if banner_class=='green' else ('red-bg' if banner_class=='red' else 'surface') }});
             border-color: var(--{{ 'green' if banner_class=='green' else ('red' if banner_class=='red' else 'border') }});">
   <div class="headline" style="color: var(--{{ 'green' if banner_class=='green' else ('red' if banner_class=='red' else 'text-dim') }});">
-    Current Active Prediction: {{ pred }}
+    Current Active Prediction: {{ pred }}{% if prediction and prediction.provisional %} <span class="badge" style="background: var(--amber); color: #000;">PROVISIONAL — candle not closed yet</span>{% endif %}
   </div>
   <div class="detail">
     {% if prediction %}

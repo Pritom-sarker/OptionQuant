@@ -130,6 +130,22 @@ def _tick_tab1() -> None:
                                   config.LAST_N_CANDLES_TABLE)
 
     with state.lock:
+        # The real, fully-closed result for this window has just landed —
+        # if Early Entry had already staged a provisional guess for the same
+        # window (matched by close time), compare them. A trade may already
+        # be open off that provisional signal; per the configured behavior it
+        # is never cancelled/exited here, this is purely a log line so
+        # mismatches are visible.
+        early = state.tab1_early_prediction
+        if (early is not None and active_row is not None
+                and int(early["time"]) == int(active_row["time"])
+                and early.get("predicted_next") != active_row.get("predicted_next")):
+            log.warning("[Tab1] EARLY ENTRY MISMATCH window=%s provisional=%s actual=%s — "
+                        "any trade already entered off the provisional signal stays open.",
+                        active_row["time"], early.get("predicted_next"), active_row.get("predicted_next"))
+        if early is not None and active_row is not None and int(early["time"]) == int(active_row["time"]):
+            state.tab1_early_prediction = None   # this window is resolved for real now
+
         state.tab1_prediction = active_row
         state.tab1_df = df
         state.tab1_computed = {
@@ -140,13 +156,74 @@ def _tick_tab1() -> None:
         }
 
 
+def _tick_tab1_early() -> None:
+    """
+    Opt-in Early Entry (default OFF, see config.DEFAULT_TAB1_EARLY_ENTRY_
+    ENABLED): checks the still-forming candle's live OHLC against the same
+    pattern pipeline _tick_tab1 uses, but only in the last `early_entry_
+    lead_sec` seconds before it closes. If it already matches, that's staged
+    into state.tab1_prediction early (tagged "provisional") so Tab 3 can act
+    on it immediately instead of waiting for the close plus the normal
+    detection cycle. Always runs after _tick_tab1() in the same tab1_loop
+    iteration, so its write is what persists into the next iteration — a
+    genuine real closed-candle result (written by _tick_tab1) is never
+    stomped by a stale provisional one for a *different*, already-passed
+    window; see the "not within lead window" branch below.
+    """
+    settings = state.tab1_settings
+    if not settings.get("early_entry_enabled"):
+        return
+
+    with state.lock:
+        closed_candles_df = state.tab1_df
+    if closed_candles_df is None:
+        return
+
+    forming = btcapi.fetch_forming_btcusd_candle()
+    if forming is None:
+        return
+
+    lead = settings.get("early_entry_lead_sec", config.DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC)
+    seconds_to_close = forming["time"] - time.time()
+
+    with state.lock:
+        real_pred = state.tab1_prediction
+    if real_pred is not None and int(real_pred["time"]) == int(forming["time"]):
+        return   # the real closed-candle signal for this exact window already landed
+
+    if not (0 < seconds_to_close <= lead):
+        with state.lock:
+            if state.tab1_early_prediction is not None and int(state.tab1_early_prediction["time"]) != int(forming["time"]):
+                state.tab1_early_prediction = None   # stale provisional from a window that already passed
+        return
+
+    closed_candles = closed_candles_df[["time", "open", "high", "low", "close", "volume"]].to_dict("records")
+    bdf = se.candles_to_df(closed_candles + [forming])
+    bdf = se.compute_indicators(bdf, settings["atr_length"], settings["atr_sma_length"])
+    ev = se.evaluate_patterns(bdf, settings["patterns"], settings["atr_mult"])
+    row = se.build_signal_table(bdf, ev["per_pattern"], ev["combined_dir"], ev["combined_mode"],
+                                 ev["combined_act_ok"], last_n=1)[0]
+
+    with state.lock:
+        if row["predicted_next"] in ("GREEN", "RED"):
+            row["provisional"] = True
+            state.tab1_early_prediction = row
+            state.tab1_prediction = row
+        else:
+            state.tab1_early_prediction = None
+
+
 def tab1_loop() -> None:
     while True:
         try:
             _tick_tab1()
         except Exception:
             log.exception("tab1_loop tick failed")
-        time.sleep(15)
+        try:
+            _tick_tab1_early()
+        except Exception:
+            log.exception("tab1_loop early-entry tick failed")
+        time.sleep(config.TAB1_POLL_INTERVAL_SEC)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -420,7 +497,7 @@ def tab3_loop() -> None:
         with state.lock:
             active = bool(state.tab3_slots)
             interval = state.tab3_settings["refresh_interval"]
-        time.sleep(interval if active else 10)
+        time.sleep(interval if active else config.TAB3_IDLE_POLL_INTERVAL_SEC)
 
 
 def start_background_threads() -> None:
