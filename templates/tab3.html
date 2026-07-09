@@ -1,11 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Tab 3 — Live Trade{% endblock %}
+{% block title %}Live Trades{% endblock %}
 {% block content %}
-<h1 class="page-title">Tab 3 — Live Trade</h1>
-<p class="caption">⚠️ Paper-trading simulation only — no wallet, no order placement, no real Polymarket trading, ever.
-  See Tab 4 for the full detail breakdown.
+<div class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">Live Trades</h1>
+    <p class="caption">⚠️ Paper-trading simulation only — no wallet, no order placement, no real Polymarket trading, ever.
+      See Trade Details for the full breakdown.</p>
+  </div>
   <span class="live-status" id="live-status-tab3"><span class="live-dot" id="live-dot-tab3"></span><span id="live-text-tab3">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab3">last update: —</span></span>
-</p>
+</div>
 
 <div id="tab3-live">
   {% include "partials/tab3_live.html" %}

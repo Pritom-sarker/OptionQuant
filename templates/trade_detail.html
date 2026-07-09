@@ -4,12 +4,13 @@
 {% block content %}
 {% if not found %}
 <h1 class="page-title">Trade not found</h1>
-<p class="caption">No trade with that ID exists. <a href="/tab5">&larr; Back to Trade Stats</a></p>
+<p class="caption">No trade with that ID exists.</p>
+<a href="/tab5" class="back-link">&larr; Back to Trade History</a>
 {% else %}
+<a href="/tab5" class="back-link">&larr; Back to Trade History</a>
 <h1 class="page-title">{{ icon }} Trade #{{ row.id }} — {{ row.prediction }} — {{ row.status }}
   {% if return_pct is not none %}({{ row.final_result }}, {{ "%+.1f%%"|format(return_pct * 100) }}){% endif %}
 </h1>
-<p class="caption"><a href="/tab5">&larr; Back to Trade Stats &amp; Documentation</a></p>
 
 {% set r = report %}
 <h2 class="section">Signal Section</h2>

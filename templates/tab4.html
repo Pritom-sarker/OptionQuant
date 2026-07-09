@@ -1,10 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Tab 4 — Trade Details{% endblock %}
+{% block title %}Trade Details{% endblock %}
 {% block content %}
-<h1 class="page-title">Tab 4 — Trade Details</h1>
-<p class="caption">Full breakdown of the currently running trade.
+<div class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">Trade Details</h1>
+    <p class="caption">Full breakdown of the currently running trade.</p>
+  </div>
   <span class="live-status" id="live-status-tab4"><span class="live-dot" id="live-dot-tab4"></span><span id="live-text-tab4">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab4">last update: —</span></span>
-</p>
+</div>
 
 <div id="tab4-live">
   {% include "partials/tab4_live.html" %}

@@ -3,10 +3,11 @@
 {% block content %}
 {% if not found %}
 <h1 class="page-title">Skipped signal not found</h1>
-<p class="caption">No skipped-late candidate with that ID exists. <a href="/tab5">&larr; Back to Trade Stats</a></p>
+<p class="caption">No skipped-late candidate with that ID exists.</p>
+<a href="/tab5" class="back-link">&larr; Back to Trade History</a>
 {% else %}
+<a href="/tab5" class="back-link">&larr; Back to Trade History</a>
 <h1 class="page-title">⏭️ Skipped Signal #{{ row.id }} — {{ row.prediction }} — Entry Skipped (Too Late)</h1>
-<p class="caption"><a href="/tab5">&larr; Back to Trade Stats &amp; Documentation</a></p>
 
 <h2 class="section">Signal Candle</h2>
 <div class="table-scroll"><table class="data-table"><tbody>

@@ -1,15 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Settings{% endblock %}
 {% block content %}
-<h1 class="page-title">Settings</h1>
-<p class="caption">Adjust Tab 1's signal/pattern settings and Tab 3's trading engine thresholds. Changes apply immediately to the background engine.</p>
+<div class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">Settings</h1>
+    <p class="caption">Adjust the Prediction Engine's signal/pattern settings and the Live Trades engine's thresholds. Changes apply immediately to the background engine.</p>
+  </div>
+</div>
 
 {% if saved %}<div class="callout" style="border-left-color: var(--green);">Settings saved.</div>{% endif %}
 {% if reset %}<div class="callout" style="border-left-color: var(--green);">Database reset — all candidates, trades, and snapshots cleared.</div>{% endif %}
 {% if imported %}<div class="callout" style="border-left-color: var(--green);">Backup imported — settings and database restored.</div>{% endif %}
 {% if import_error %}<div class="callout" style="border-left-color: var(--red);">Import failed — the file wasn't a valid backup zip. Nothing was changed.</div>{% endif %}
 
-<h2 class="section">Tab 1 — Pattern &amp; Signal</h2>
+<h2 class="section">Prediction Engine — Pattern &amp; Signal</h2>
 <p class="caption">Enable as many base patterns as you like — each one runs completely independently with its own filter toggles below it.
   When more than one enabled pattern fires on the same candle, priority order (ATR Reversal → Engulfing → Hammer/SS → Exhaustion) picks the winner for that candle.</p>
 <form class="settings-form" method="post" action="/settings/tab1">
@@ -38,16 +42,16 @@
   <div class="field checkbox"><input type="checkbox" name="show_ema" id="show_ema" {{ "checked" if tab1.show_ema else "" }}><label for="show_ema">Show EMA 20/50/200</label></div>
   <div class="field checkbox"><input type="checkbox" name="show_signals" id="show_signals" {{ "checked" if tab1.show_signals else "" }}><label for="show_signals">Show signal markers + WIN/LOSS</label></div>
 
-  <div class="caption" style="grid-column: 1 / -1;">Early Entry: checks the still-forming candle's live (not-yet-closed) body against the pattern in the last few seconds before it closes. If it already matches, Tab 3 can enter on it immediately instead of waiting for the close. Trades already entered off an early signal are never cancelled if the true close later disagrees — only a log line records the mismatch.</div>
+  <div class="caption" style="grid-column: 1 / -1;">Early Entry: checks the still-forming candle's live (not-yet-closed) body against the pattern in the last few seconds before it closes. If it already matches, Live Trades can enter on it immediately instead of waiting for the close. Trades already entered off an early signal are never cancelled if the true close later disagrees — only a log line records the mismatch.</div>
   <div class="field checkbox"><input type="checkbox" name="early_entry_enabled" id="early_entry_enabled" {{ "checked" if tab1.early_entry_enabled else "" }}><label for="early_entry_enabled">Enable Early Entry</label></div>
   <div class="field"><label>Early Entry Lead Time (sec before close)</label><input type="number" name="early_entry_lead_sec" value="{{ tab1.early_entry_lead_sec }}" min="1" max="60"></div>
 
-  <div class="form-actions"><button type="submit">Apply Tab 1 Settings</button></div>
+  <div class="form-actions"><button type="submit">Apply Prediction Engine Settings</button></div>
 </form>
 
-<h2 class="section">Tab 3 — Trading Engine</h2>
-<p class="caption">Every trade's stake is sized live by Tab 6's Money Management settings, not a flat amount here — see the <a href="/tab6">Money Management</a> tab.
-  A candidate whose window has already opened for more than {{ entry_deadline_sec }}s with no entry yet is skipped instead of entered late — see Tab 5's "Skipped (Late)" rows.</p>
+<h2 class="section">Live Trades — Trading Engine</h2>
+<p class="caption">Every trade's stake is sized live by Money Management's settings, not a flat amount here — see the <a href="/tab6">Money Management</a> page.
+  A candidate whose window has already opened for more than {{ entry_deadline_sec }}s with no entry yet is skipped instead of entered late — see Trade History's "Skipped (Late)" rows.</p>
 <form class="settings-form" method="post" action="/settings/tab3">
   <div class="field"><label>Refresh Interval (sec)</label><input type="number" name="refresh_interval" value="{{ tab3.refresh_interval }}" min="1" max="60"></div>
   <div class="field"><label>Chart Refresh Interval (sec)</label><input type="number" name="chart_refresh_interval" value="{{ tab3.chart_refresh_interval }}" min="5" max="300"></div>
@@ -67,11 +71,11 @@
     <label for="immediate_mode">Immediate Entry &amp; Exit — skip order book conditions (pressure, profit factor, spread, liquidity) and enter immediately at the current market price; hold until expiry with no early exit</label>
   </div>
 
-  <div class="form-actions"><button type="submit">Apply Tab 3 Settings</button></div>
+  <div class="form-actions"><button type="submit">Apply Live Trades Settings</button></div>
 </form>
 
 <h2 class="section">Backup &amp; Restore</h2>
-<p class="caption">Export bundles Tab 1/3/6 settings and the complete trade database into one file. Import restores both from a
+<p class="caption">Export bundles all settings and the complete trade database into one file. Import restores both from a
   previously exported file, replacing everything currently running — export right after importing and you'll get the exact
   same file back, byte for byte.</p>
 <div class="callout">
@@ -88,7 +92,7 @@
 
 <h2 class="section">Danger Zone</h2>
 <div class="callout" style="border-left-color: var(--red);">
-  <p style="margin: 0 0 10px 0;">Permanently deletes every candidate, trade, and snapshot (Tab 3/4/5/6 all go back to a clean slate — Money Management's balance and loss basket reset to your starting balance since they're computed from this same history). Currently open trades are abandoned, not settled. This cannot be undone.</p>
+  <p style="margin: 0 0 10px 0;">Permanently deletes every candidate, trade, and snapshot (Live Trades, Trade Details, Trade History, and Money Management all go back to a clean slate — Money Management's balance and loss basket reset to your starting balance since they're computed from this same history). Currently open trades are abandoned, not settled. This cannot be undone.</p>
   <form method="post" action="/settings/reset_database" onsubmit="return confirm('Permanently delete all trade history? This cannot be undone.');">
     <button type="submit" class="btn-danger">Reset Database</button>
   </form>

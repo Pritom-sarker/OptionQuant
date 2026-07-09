@@ -1,7 +1,7 @@
 {% import "partials/_macros.html" as m %}
 
 {% if not has_trades %}
-<div class="callout idle">No settled trades yet — Tab 6 replays real settled trades from Tab 3/Tab 5, so it has nothing to show until at least one trade closes.</div>
+<div class="callout idle">No settled trades yet — Money Management replays real settled trades from Live Trades/Trade History, so it has nothing to show until at least one trade closes.</div>
 {% else %}
 
 {% set profit = summary.ending_balance >= summary.starting_balance %}

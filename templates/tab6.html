@@ -1,13 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Tab 6 — Money Management{% endblock %}
+{% block title %}Money Management{% endblock %}
 {% block content %}
-<h1 class="page-title">Tab 6 — Money Management Simulator</h1>
-<p class="caption">Replays every real settled trade from Tab 3/Tab 5, oldest to newest, through a loss-basket
-  recovery model — same sizing/recovery logic as the pine_strategy_simulator project's Money Management tab,
-  except each win pays out at <strong>that trade's own dynamic profit factor</strong> (from its real entry
-  price) instead of a static profit factor of 1.
+<div class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">Money Management</h1>
+    <p class="caption">Replays every real settled trade from Live Trades/Trade History, oldest to newest, through a loss-basket
+      recovery model, with each win paying out at <strong>that trade's own dynamic profit factor</strong> (from its real entry
+      price) instead of a static profit factor of 1.</p>
+  </div>
   <span class="live-status" id="live-status-tab6"><span class="live-dot" id="live-dot-tab6"></span><span id="live-text-tab6">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab6">last update: —</span></span>
-</p>
+</div>
 
 <h2 class="section">Money Management Settings</h2>
 <form class="settings-form" method="post" action="/settings/money_management">

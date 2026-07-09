@@ -1,10 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Tab 2 — Order Book Simulator{% endblock %}
+{% block title %}Order Book{% endblock %}
 {% block content %}
-<h1 class="page-title">Polymarket Order Book Simulator</h1>
-<p class="caption">⚠️ Paper-trading simulation only — no wallet, no order placement, no API trading. Always active — runs independently of Tab 1.
+<div class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">Order Book</h1>
+    <p class="caption">⚠️ Paper-trading simulation only — no wallet, no order placement, no API trading. Always active — runs independently of the Prediction Engine.</p>
+  </div>
   <span class="live-status" id="live-status-tab2"><span class="live-dot" id="live-dot-tab2"></span><span id="live-text-tab2">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab2">last update: —</span></span>
-</p>
+</div>
 
 <div id="tab2-live">
   {% include "partials/tab2_live.html" %}

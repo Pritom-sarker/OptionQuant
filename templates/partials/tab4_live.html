@@ -2,7 +2,7 @@
 
 {% if not has_activity %}
 <div class="callout idle">No active trade right now.
-Waiting for Tab 1 signal and Tab 2 order book confirmation.</div>
+Waiting for a Prediction Engine signal and Order Book confirmation.</div>
 {% else %}
 <p class="caption">As of {{ as_of }}{% if items|length > 1 %} — {{ items|length }} trades active at once, one per candle/contract{% endif %}</p>
 

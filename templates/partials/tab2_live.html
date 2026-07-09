@@ -20,7 +20,7 @@
   Polymarket does not publish an absolute strike/threshold value for it.</p>
 
 <div class="metric-grid">
-  {{ m.metric("Tab 1 Signal", predicted_label) }}
+  {{ m.metric("Prediction Signal", predicted_label) }}
   {{ m.metric("Selected Side", selected_side) }}
   {{ m.metric("Current YES Price", yes_price) }}
   {{ m.metric("Current NO Price", no_price) }}
@@ -66,6 +66,6 @@
 <h2 class="section">Chart 5 — Decision Checklist</h2>
 <div class="chart-card"><img data-live="/charts/tab2/checklist.png" src="/charts/tab2/checklist.png" alt="Decision checklist"></div>
 
-<p class="caption">Tab 2 never creates a real order or a paper trade by itself — it only reports OBSERVE / WAIT / READY FOR PAPER ENTRY.</p>
+<p class="caption">The Order Book page never creates a real order or a paper trade by itself — it only reports OBSERVE / WAIT / READY FOR PAPER ENTRY.</p>
 
 {% endif %}
