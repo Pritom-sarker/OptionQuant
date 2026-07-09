@@ -1,9 +1,12 @@
 """Full HTML page routes — one per tab, plus /settings."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Form
-from fastapi.responses import RedirectResponse
+import time
 
+from fastapi import APIRouter, Request, Form, UploadFile, File
+from fastapi.responses import RedirectResponse, Response
+
+import backup
 import config
 import trade_db
 from engine_state import state, save_settings
@@ -85,13 +88,15 @@ def settings_money_management(
 
 
 @router.get("/settings")
-def settings_page(request: Request, saved: bool = False, reset: bool = False):
+def settings_page(request: Request, saved: bool = False, reset: bool = False,
+                   imported: bool = False, import_error: bool = False):
     with state.lock:
         tab1 = dict(state.tab1_settings)
         tab3 = dict(state.tab3_settings)
     ctx = {"request": request, "active_tab": "settings", "tab1": tab1, "tab3": tab3,
            "pattern_options": config.PATTERN_OPTIONS, "pattern_slugs": config.PATTERN_SLUGS,
-           "saved": saved, "reset": reset, "entry_deadline_sec": config.TAB3_ENTRY_DEADLINE_SEC}
+           "saved": saved, "reset": reset, "imported": imported, "import_error": import_error,
+           "entry_deadline_sec": config.TAB3_ENTRY_DEADLINE_SEC}
     return templates.TemplateResponse(request, "settings.html", ctx)
 
 
@@ -170,3 +175,27 @@ def reset_database():
     with state.lock:
         state.tab3_slots = []
     return RedirectResponse(url="/settings?reset=1", status_code=303)
+
+
+@router.get("/settings/backup/export")
+def backup_export():
+    """Downloads a zip of the live settings file + the live SQLite DB file,
+    unchanged — see backup.py's module docstring for why raw files instead
+    of a JSON row dump."""
+    data = backup.export_backup()
+    filename = f"optionquant_backup_{time.strftime('%Y%m%d_%H%M%S')}.zip"
+    return Response(content=data, media_type="application/zip",
+                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.post("/settings/backup/import")
+async def backup_import(backup_file: UploadFile = File(...)):
+    """Restores settings + database from a previously exported zip. Fully
+    replaces whatever's currently running — see backup.import_backup's
+    docstring."""
+    data = await backup_file.read()
+    try:
+        backup.import_backup(data)
+    except Exception:
+        return RedirectResponse(url="/settings?import_error=1", status_code=303)
+    return RedirectResponse(url="/settings?imported=1", status_code=303)

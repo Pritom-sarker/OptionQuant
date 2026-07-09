@@ -6,6 +6,8 @@
 
 {% if saved %}<div class="callout" style="border-left-color: var(--green);">Settings saved.</div>{% endif %}
 {% if reset %}<div class="callout" style="border-left-color: var(--green);">Database reset — all candidates, trades, and snapshots cleared.</div>{% endif %}
+{% if imported %}<div class="callout" style="border-left-color: var(--green);">Backup imported — settings and database restored.</div>{% endif %}
+{% if import_error %}<div class="callout" style="border-left-color: var(--red);">Import failed — the file wasn't a valid backup zip. Nothing was changed.</div>{% endif %}
 
 <h2 class="section">Tab 1 — Pattern &amp; Signal</h2>
 <p class="caption">Enable as many base patterns as you like — each one runs completely independently with its own filter toggles below it.
@@ -67,6 +69,22 @@
 
   <div class="form-actions"><button type="submit">Apply Tab 3 Settings</button></div>
 </form>
+
+<h2 class="section">Backup &amp; Restore</h2>
+<p class="caption">Export bundles Tab 1/3/6 settings and the complete trade database into one file. Import restores both from a
+  previously exported file, replacing everything currently running — export right after importing and you'll get the exact
+  same file back, byte for byte.</p>
+<div class="callout">
+  <p style="margin: 0 0 10px 0;"><a href="/settings/backup/export"><button type="button">Download Backup</button></a></p>
+  <form method="post" action="/settings/backup/import" enctype="multipart/form-data"
+        onsubmit="return confirm('Import will replace ALL current settings and trade history with the contents of this file. Continue?');">
+    <div class="field">
+      <label>Backup file (.zip)</label>
+      <input type="file" name="backup_file" accept=".zip" required>
+    </div>
+    <div class="form-actions"><button type="submit">Import Backup</button></div>
+  </form>
+</div>
 
 <h2 class="section">Danger Zone</h2>
 <div class="callout" style="border-left-color: var(--red);">

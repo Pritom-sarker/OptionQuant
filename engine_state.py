@@ -116,13 +116,21 @@ class AppState:
             "reset_after_n_wins": config.DEFAULT_MM_RESET_AFTER_N_WINS,
         }
 
-        saved = _load_saved_settings()
-        if "tab1_settings" in saved:
-            self.tab1_settings.update(saved["tab1_settings"])
-        if "tab3_settings" in saved:
-            self.tab3_settings.update(saved["tab3_settings"])
-        if "mm_settings" in saved:
-            self.mm_settings.update(saved["mm_settings"])
+        load_settings_from_disk(self)
+
+
+def load_settings_from_disk(target: "AppState") -> None:
+    """Applies SETTINGS_PATH's contents onto an existing AppState in place —
+    used both at process startup (AppState.__init__) and by backup.
+    import_backup() to make a restored settings file take effect on the
+    already-running process without a restart."""
+    saved = _load_saved_settings()
+    if "tab1_settings" in saved:
+        target.tab1_settings.update(saved["tab1_settings"])
+    if "tab3_settings" in saved:
+        target.tab3_settings.update(saved["tab3_settings"])
+    if "mm_settings" in saved:
+        target.mm_settings.update(saved["mm_settings"])
 
 
 def save_settings() -> None:
