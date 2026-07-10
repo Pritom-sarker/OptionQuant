@@ -95,8 +95,7 @@ def settings_page(request: Request, saved: bool = False, reset: bool = False,
         tab3 = dict(state.tab3_settings)
     ctx = {"request": request, "active_tab": "settings", "tab1": tab1, "tab3": tab3,
            "pattern_options": config.PATTERN_OPTIONS, "pattern_slugs": config.PATTERN_SLUGS,
-           "saved": saved, "reset": reset, "imported": imported, "import_error": import_error,
-           "entry_deadline_sec": config.TAB3_ENTRY_DEADLINE_SEC}
+           "saved": saved, "reset": reset, "imported": imported, "import_error": import_error}
     return templates.TemplateResponse(request, "settings.html", ctx)
 
 
@@ -145,6 +144,7 @@ def settings_tab3(
     pressure_confirm_count: int = Form(...), max_spread: float = Form(...),
     min_liquidity: float = Form(...), pressure_threshold: float = Form(...),
     depth_stable_tolerance: float = Form(...), immediate_mode: bool = Form(False),
+    entry_deadline_sec: int = Form(...),
 ):
     with state.lock:
         state.tab3_settings = {
@@ -155,6 +155,7 @@ def settings_tab3(
             "pressure_confirm_count": pressure_confirm_count, "max_spread": max_spread,
             "min_liquidity": min_liquidity, "pressure_threshold": pressure_threshold,
             "depth_stable_tolerance": depth_stable_tolerance, "immediate_mode": immediate_mode,
+            "entry_deadline_sec": entry_deadline_sec,
         }
     save_settings()
     return RedirectResponse(url="/settings?saved=1", status_code=303)

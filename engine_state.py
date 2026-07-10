@@ -46,7 +46,7 @@ class AppState:
         self.tab1_settings: dict = {
             "patterns": {
                 name: {
-                    "enabled": (name == config.DEFAULT_PATTERN),
+                    "enabled": (name in config.DEFAULT_ENABLED_PATTERNS),
                     "filters": dict(config.DEFAULT_PATTERN_FILTERS),
                 }
                 for name in config.PATTERN_OPTIONS
@@ -92,6 +92,7 @@ class AppState:
             "pressure_threshold": config.DEFAULT_TAB3_PRESSURE_THRESHOLD,
             "depth_stable_tolerance": config.DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE,
             "immediate_mode": config.DEFAULT_TAB3_IMMEDIATE_MODE,
+            "entry_deadline_sec": config.DEFAULT_TAB3_ENTRY_DEADLINE_SEC,
         }
         # Each slot is {"candidate": TradeCandidate, "trade": Optional[ActiveTrade]} —
         # multiple can be active at once (one per candle/contract; a new candle's

@@ -41,14 +41,14 @@ LOOKBACK_HOURS      = 10
 PATTERN_OPTIONS = ["ATR Reversal", "Engulfing", "Hammer/SS", "Exhaustion"]
 PATTERN_SLUGS = {"ATR Reversal": "atr_reversal", "Engulfing": "engulfing",
                   "Hammer/SS": "hammer_ss", "Exhaustion": "exhaustion"}
-DEFAULT_PATTERN = "ATR Reversal"   # only this one is enabled by default
+DEFAULT_ENABLED_PATTERNS = ["ATR Reversal", "Exhaustion"]   # enabled by default; the rest start off
 
 DEFAULT_ATR_LENGTH     = 14
-DEFAULT_ATR_MULTIPLIER = 1.5
+DEFAULT_ATR_MULTIPLIER = 1.0
 DEFAULT_ATR_SMA_LENGTH = 50
 
-DEFAULT_F1_TREND        = True   # EMA20 > EMA50 alignment
-DEFAULT_F2_VOLATILITY   = True   # ATR above ATR SMA
+DEFAULT_F1_TREND        = False  # EMA20 > EMA50 alignment
+DEFAULT_F2_VOLATILITY   = False  # ATR above ATR SMA
 DEFAULT_F3_CLOSE_LOC    = False  # close in top/bottom 30%
 DEFAULT_F4_CONTINUATION = False  # close breaks prior candle
 DEFAULT_F5_ANTI_CHOP    = True   # EMA spread > ATR x 0.15
@@ -141,7 +141,7 @@ DEFAULT_TAB3_REFRESH_INTERVAL_SEC      = 3      # engine tick — fast, drives T
 DEFAULT_TAB3_CHART_REFRESH_SEC         = 30     # chart images only regenerate this often — values are always live
 DEFAULT_TAB3_OBSERVATION_BURST_SEC     = 20     # Candidate Observation Time (initial burst, ~10 snapshots)
 
-DEFAULT_TAB3_MAX_ENTRY_PRICE        = 0.52    # soft cap used by the entry-mode logic
+DEFAULT_TAB3_MAX_ENTRY_PRICE        = 0.50    # soft cap used by the entry-mode logic
 DEFAULT_TAB3_HARD_BLOCK_PRICE       = 0.55    # hard rule — never enter above this, no exceptions
 DEFAULT_TAB3_MIN_PROFIT_FACTOR      = 0.90
 DEFAULT_TAB3_EARLY_EXIT_LOSS_PCT    = 0.20
@@ -156,7 +156,10 @@ DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE = 0.10    # Mode 1 "ask depth stable" — ma
 # a candidate is created; skip early exit entirely (only settle_at_expiry
 # ever closes the trade). Simpler alternative to the order-book-based entry
 # modes above — everything else (stake, settlement, PnL, charts) is unchanged.
-DEFAULT_TAB3_IMMEDIATE_MODE = True
+# OFF by default: the order-book-confirmed modes (immediate-on-strong-
+# pressure, or wait-for-a-dip-then-recover) are the default strategy now —
+# see _decide_entry in trade_engine.py.
+DEFAULT_TAB3_IMMEDIATE_MODE = False
 
 # Backstop for signals that still land late despite Early Entry (see Tab 1's
 # early-entry settings above): once a candidate's predicted window has
@@ -165,8 +168,11 @@ DEFAULT_TAB3_IMMEDIATE_MODE = True
 # window at a price that's no longer representative of the open, so the
 # candidate is marked SKIPPED_LATE instead of entered. Skipped-late
 # candidates show up in Tab 5's history for visibility but never factor into
-# win/loss/profit stats, since no money ever moved on them.
-TAB3_ENTRY_DEADLINE_SEC = 30
+# win/loss/profit stats, since no money ever moved on them. Configurable on
+# Settings (Tab 3) — a tight deadline (e.g. 10s) suits Immediate Entry, a
+# longer one (e.g. 130s) gives the order-book-confirmed recovery-entry mode
+# enough time to actually find its dip-and-recover setup.
+DEFAULT_TAB3_ENTRY_DEADLINE_SEC = 130
 
 TAB3_SNAPSHOT_HISTORY_MAX = 2000   # bounded in-memory rolling history per candidate/trade
 

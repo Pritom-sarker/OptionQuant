@@ -51,11 +51,13 @@
 
 <h2 class="section">Live Trades — Trading Engine</h2>
 <p class="caption">Every trade's stake is sized live by Money Management's settings, not a flat amount here — see the <a href="/tab6">Money Management</a> page.
-  A candidate whose window has already opened for more than {{ entry_deadline_sec }}s with no entry yet is skipped instead of entered late — see Trade History's "Skipped (Late)" rows.</p>
+  A candidate whose window has already opened for more than the Entry Deadline below with no entry yet is skipped instead of entered late — see Trade History's "Skipped (Late)" rows.
+  Tune the deadline to match your entry mode: short (e.g. 10s) for Immediate Entry, longer (e.g. 130s) to give the order-book recovery-entry mode room to find its setup.</p>
 <form class="settings-form" method="post" action="/settings/tab3">
   <div class="field"><label>Refresh Interval (sec)</label><input type="number" name="refresh_interval" value="{{ tab3.refresh_interval }}" min="1" max="60"></div>
   <div class="field"><label>Chart Refresh Interval (sec)</label><input type="number" name="chart_refresh_interval" value="{{ tab3.chart_refresh_interval }}" min="5" max="300"></div>
   <div class="field"><label>Candidate Observation Time (sec)</label><input type="number" name="observation_burst" value="{{ tab3.observation_burst }}" min="5" max="120"></div>
+  <div class="field"><label>Entry Deadline (sec after window open)</label><input type="number" name="entry_deadline_sec" value="{{ tab3.entry_deadline_sec }}" min="5" max="280"></div>
   <div class="field"><label>Maximum Entry Price</label><input type="number" step="0.01" name="max_entry_price" value="{{ tab3.max_entry_price }}" min="0.05" max="0.99"></div>
   <div class="field"><label>Hard Entry Block Price</label><input type="number" step="0.01" name="hard_block_price" value="{{ tab3.hard_block_price }}" min="0.05" max="0.99"></div>
   <div class="field"><label>Minimum Profit Factor</label><input type="number" step="0.05" name="min_profit_factor" value="{{ tab3.min_profit_factor }}" min="0"></div>

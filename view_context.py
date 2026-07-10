@@ -476,7 +476,7 @@ def build_skipped_detail_context(candidate_id: int) -> dict:
         "created_lag": created_lag,
         "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{row['market_slug']}",
         "seconds_late": row["skip_seconds_late"],
-        "entry_deadline_sec": config.TAB3_ENTRY_DEADLINE_SEC,
+        "entry_deadline_sec": state.tab3_settings["entry_deadline_sec"],
     }
 
 
