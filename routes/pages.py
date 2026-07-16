@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse, Response
 
 import backup
 import config
+import money_management as mm
 import trade_db
 from engine_state import state, save_settings
 from templates_engine import templates
@@ -64,26 +65,54 @@ def skipped_detail_page(request: Request, candidate_id: int):
 
 
 @router.get("/tab6")
-def tab6_page(request: Request):
-    ctx = {"request": request, "active_tab": "tab6", **vc.build_money_management_context()}
+def tab6_page(request: Request, tier_error: bool = False):
+    ctx = {"request": request, "active_tab": "tab6", "tier_save_error": tier_error,
+           **vc.build_money_management_context()}
     return templates.TemplateResponse(request, "tab6.html", ctx)
 
 
 @router.post("/settings/money_management")
-def settings_money_management(
-    starting_balance: float = Form(...), base_trade_amount: float = Form(...),
-    max_trade_amount: float = Form(...), recovery_percent: float = Form(...),
-    dynamic_mode: bool = Form(False), profit_split_recovery_pct: float = Form(...),
-    reset_mode: str = Form(...), reset_after_n_wins: int = Form(5),
-):
+async def settings_money_management(request: Request):
+    """
+    Tiered Money Management settings (see money_management.py's module
+    docstring for the cycle/win-pool model). Parsed from raw form data
+    rather than typed Form(...) params because the recovery-tier rows are a
+    variable-length repeated group (tier_start[]/tier_end[]/tier_pct[]).
+    """
+    form = await request.form()
+
+    def f(name: str, default: float = 0.0) -> float:
+        return float(form.get(name, default) or default)
+
+    tier_starts = form.getlist("tier_start")
+    tier_ends = form.getlist("tier_end")
+    tier_pcts = form.getlist("tier_pct")
+    tiers = []
+    for s, e, p in zip(tier_starts, tier_ends, tier_pcts):
+        if not (s and e and p):
+            continue
+        tiers.append({"start": int(s), "end": int(e), "pct": float(p) / 100.0})
+
+    maximum_cycle_orders = int(f("maximum_cycle_orders", 10))
+    tier_errors = mm.validate_tiers(tiers, maximum_cycle_orders)
+
     with state.lock:
         state.mm_settings = {
-            "starting_balance": starting_balance, "base_trade_amount": base_trade_amount,
-            "max_trade_amount": max_trade_amount, "recovery_percent": recovery_percent / 100.0,
-            "dynamic_mode": dynamic_mode, "profit_split_recovery_pct": profit_split_recovery_pct / 100.0,
-            "reset_mode": reset_mode, "reset_after_n_wins": reset_after_n_wins,
+            "starting_balance": f("starting_balance", 1000.0),
+            "base_stake": f("base_stake", 1.0),
+            "static_lp_pct": f("static_lp_pct", 20.0) / 100.0,
+            "max_first_order_stake": f("max_first_order_stake", 3.0),
+            "maximum_cycle_orders": maximum_cycle_orders,
+            "fallback_mode": form.get("fallback_mode", "stop"),
+            "cycle_timeout_lp_pct": f("cycle_timeout_lp_pct", 20.0) / 100.0,
+            "win_pool_contribution_pct": f("win_pool_contribution_pct", 20.0) / 100.0,
+            "win_pool_lp_coverage_pct": f("win_pool_lp_coverage_pct", 50.0) / 100.0,
         }
+        if not tier_errors:
+            state.mm_tiers = tiers
     save_settings()
+    if tier_errors:
+        return RedirectResponse(url="/tab6?tier_error=1", status_code=303)
     return RedirectResponse(url="/tab6", status_code=303)
 
 
@@ -144,6 +173,7 @@ def settings_tab3(
     pressure_confirm_count: int = Form(...), max_spread: float = Form(...),
     min_liquidity: float = Form(...), pressure_threshold: float = Form(...),
     depth_stable_tolerance: float = Form(...), immediate_mode: bool = Form(False),
+    immediate_entry_window_sec: int = Form(...),
     entry_deadline_sec: int = Form(...),
 ):
     with state.lock:
@@ -155,6 +185,7 @@ def settings_tab3(
             "pressure_confirm_count": pressure_confirm_count, "max_spread": max_spread,
             "min_liquidity": min_liquidity, "pressure_threshold": pressure_threshold,
             "depth_stable_tolerance": depth_stable_tolerance, "immediate_mode": immediate_mode,
+            "immediate_entry_window_sec": immediate_entry_window_sec,
             "entry_deadline_sec": entry_deadline_sec,
         }
     save_settings()

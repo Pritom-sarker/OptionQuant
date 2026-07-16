@@ -1,202 +1,344 @@
 """
-Tab 6 — Money Management Simulator. Ported from
-pine_strategy_simulator/money_management.py's run_simulation() — identical
-sizing formula, loss-basket recovery mechanics, dynamic recovery tiers, and
-reset modes. See config.py's "Tab 6" section for the one deliberate change:
-WIN payoff here uses each trade's own dynamic profit factor
-(orderbook_engine.profit_factor(entry_price)) instead of a static profit
-factor of 1.
+Tab 6 — Money Management. Tiered cycle/win-pool sizing, live-wired into every
+real trade Tab 3 places (see background_worker._tick_tab3 and
+next_trade_amount_tiered's docstring). Ported from
+pine_strategy_simulator/money_management.py::run_tiered_simulation — same
+two-pool model, same win-pool mechanics, same "stop" fallback on hitting
+Maximum Cycle Orders — see that module's docstrings for the full mechanics
+writeup; this file only adapts it to replay real settled trades instead of a
+candle-by-candle backtest walk.
 
-This replays the app's own REAL settled trades (trade_db, chronological,
-oldest -> newest) rather than a historical Pine-strategy backtest sweep —
-Tab 1/Tab 3 already generate the real signals/trades live, so there is no
-separate strategy-combination step here, just the money-management bookkeeping
-layered on top of what actually happened.
+Two deliberate adaptations for live trades:
+  1. WIN payout/recovery accounting uses each trade's own REAL payout
+     multiple, orderbook_engine.profit_factor(entry_price) — known only once
+     a trade has actually settled, exactly like the old fixed/dynamic system
+     this replaces already did for its own WIN payoff.
+  2. Stake SIZING (recovery_stake / lp_addon, for a trade that hasn't
+     happened yet) never divides by a payout ratio — an upcoming trade's own
+     entry price/PF is unknowable in advance, so sizing works directly off
+     the loss/pool amounts, matching how the old system's sizing formula
+     already never referenced a profit factor either (only its WIN-payoff
+     step did). Under the validated net_profit_ratio=1.0 examples this
+     produces identical numbers to the backtest version, since dividing by
+     1.0 changes nothing.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 import orderbook_engine as obe
 
-DYNAMIC_TIERS = [
-    (5, 0.25),    # loss basket <= 5x base trade -> 25%
-    (10, 0.15),   # <= 10x base trade -> 15%
-    (20, 0.10),   # <= 20x base trade -> 10%
-]
-DYNAMIC_FLOOR_PCT = 0.05   # > 20x base trade -> 5%
 
-
-def _recovery_pct_for(loss_basket: float, base_trade: float, dynamic_mode: bool, fixed_pct: float) -> float:
-    if not dynamic_mode:
-        return fixed_pct
-    for multiple, pct in DYNAMIC_TIERS:
-        if loss_basket <= multiple * base_trade:
-            return pct
-    return DYNAMIC_FLOOR_PCT
-
-
-def run_simulation(trades: list[dict], money: dict) -> dict:
+def validate_tiers(tiers: list[dict], maximum_cycle_orders: int) -> list[str]:
     """
-    trades: real settled trades, chronological (oldest -> newest), each
-    {"time": entry_time, "result": "WIN"|"LOSS", "entry_price": float,
-    "direction": "YES"|"NO"} — exactly trade_db's settled rows, reversed.
-
-    money: {starting_balance, base_trade_amount, max_trade_amount,
-    recovery_percent (0-1, fixed), dynamic_mode (bool),
-    profit_split_recovery_pct (0-1), reset_mode ("never"|"on_zero"|
-    "after_n_wins"), reset_after_n_wins (int)}
-
-    Sizing (never martingale — no doubling on loss):
-      recovery_addon = loss_basket * recovery_pct
-      trade_amount = min(base_trade_amount + recovery_addon, max_trade_amount)
-
-    LOSS: realized_profit -= trade_amount; loss_basket += trade_amount; balance -= trade_amount
-    WIN:  profit_factor = orderbook_engine.profit_factor(entry_price)  -- DYNAMIC, per real trade
-          gross_win = trade_amount * profit_factor
-          balance += gross_win; recovery_part = gross_win * profit_split_recovery_pct
-          profit_part = gross_win - recovery_part; loss_basket = max(0, loss_basket - recovery_part)
-          realized_profit += profit_part; recovered_profit += recovery_part
-
-    Returns {"summary": dict, "trade_log": list[dict], "curves": {"time": [...],
-    "balance": [...], "loss_basket": [...], "trade_amount": [...]}}
+    tiers: list of {"start": int, "end": int, "pct": float (0-1)}.
+    Returns a list of human-readable error strings; empty list = valid.
+    Tiers must be positive-integer ranges, start <= end, pct in [0, 1],
+    non-overlapping, and must contiguously cover loss position 1 through
+    maximum_cycle_orders with no gaps (so every position in that range has
+    exactly one recovery percentage, and fallback_mode alone governs
+    anything past maximum_cycle_orders).
     """
-    starting_balance = float(money["starting_balance"])
-    base_trade = float(money["base_trade_amount"])
-    max_trade_amount = float(money["max_trade_amount"])
-    fixed_recovery_pct = float(money["recovery_percent"])
-    dynamic_mode = bool(money["dynamic_mode"])
-    profit_split_recovery_pct = float(money["profit_split_recovery_pct"])
-    reset_mode = money["reset_mode"]
-    reset_after_n_wins = int(money.get("reset_after_n_wins", 0))
+    errors = []
+    if not tiers:
+        return ["At least one recovery tier is required."]
+
+    for idx, t in enumerate(tiers, start=1):
+        start, end, pct = t.get("start"), t.get("end"), t.get("pct")
+        if start is None or end is None or pct is None:
+            errors.append(f"Tier {idx}: start, end, and recovery % are all required.")
+            continue
+        try:
+            start_i, end_i = int(start), int(end)
+        except (TypeError, ValueError):
+            errors.append(f"Tier {idx}: start and end must be whole numbers.")
+            continue
+        if float(start_i) != float(start) or float(end_i) != float(end):
+            errors.append(f"Tier {idx}: start ({start}) and end ({end}) must be whole numbers.")
+            continue
+        if start_i <= 0 or end_i <= 0:
+            errors.append(f"Tier {idx}: start and end must be positive integers (got {start_i}-{end_i}).")
+        if start_i > end_i:
+            errors.append(f"Tier {idx}: start ({start_i}) cannot be greater than end ({end_i}).")
+        if not (0.0 <= float(pct) <= 1.0):
+            errors.append(f"Tier {idx}: recovery percentage must be between 0% and 100% (got {float(pct) * 100:.0f}%).")
+
+    if errors:
+        return errors
+
+    sorted_tiers = sorted(tiers, key=lambda t: int(t["start"]))
+    if int(sorted_tiers[0]["start"]) != 1:
+        errors.append(f"The first tier must start at loss position 1 (starts at {int(sorted_tiers[0]['start'])}).")
+
+    for prev, cur in zip(sorted_tiers, sorted_tiers[1:]):
+        prev_end, cur_start = int(prev["end"]), int(cur["start"])
+        if cur_start <= prev_end:
+            errors.append(f"Tiers overlap: {int(prev['start'])}-{prev_end} and {cur_start}-{int(cur['end'])} "
+                           f"both cover position {cur_start}.")
+        elif cur_start != prev_end + 1:
+            errors.append(f"Gap between tiers: position {prev_end + 1} to {cur_start - 1} "
+                           f"has no assigned recovery percentage.")
+
+    last_end = int(sorted_tiers[-1]["end"])
+    if not errors and last_end != int(maximum_cycle_orders):
+        errors.append(f"The last tier must end exactly at Maximum Cycle Orders ({int(maximum_cycle_orders)}) — "
+                       f"it currently ends at {last_end}. Either extend the last tier or lower Maximum Cycle Orders.")
+
+    return errors
+
+
+def _tier_for_position(position: int, sorted_tiers: list[dict]) -> tuple[Optional[int], Optional[float], Optional[str]]:
+    for idx, t in enumerate(sorted_tiers, start=1):
+        if int(t["start"]) <= position <= int(t["end"]):
+            return idx, float(t["pct"]), f"Tier {idx} ({int(t['start'])}-{int(t['end'])})"
+    return None, None, None
+
+
+def trades_from_db_rows(rows: list[dict]) -> list[dict]:
+    """
+    Converts trade_db rows (as returned by trade_db.fetch_all_trades(),
+    newest-first) into the chronological (oldest -> newest) {"time","result",
+    "entry_price","direction"} list replay_tiered() expects. The single
+    shared conversion — both Tab 6's display and Tab 3's live sizing (see
+    next_trade_amount_tiered()) call this so they can never drift out of
+    sync with each other.
+    """
+    return [
+        {"time": r["entry_time"], "result": r["final_result"], "entry_price": r["entry_price"],
+         "direction": "YES" if r["direction"] == 1 else "NO"}
+        for r in reversed(rows)
+    ]
+
+
+def replay_tiered(trades: list[dict], money: dict, tiers: list[dict]) -> dict:
+    """
+    Walks real settled trades (chronological, oldest -> newest) through the
+    tiered cycle/win-pool state machine — see this module's docstring and
+    pine_strategy_simulator/money_management.py::run_tiered_simulation for
+    the full mechanics writeup (temporary_cycle_loss / permanent_loss_pool /
+    win_pool, order-1-only LP tax capped by max_first_order_stake, the "stop"
+    fallback force-closing a maxed-out cycle instead of halting).
+
+    trades: trades_from_db_rows()'s output.
+    money: {starting_balance (display only), base_stake, static_lp_pct,
+            max_first_order_stake, maximum_cycle_orders, fallback_mode
+            ("stop"|"continue"|"manual"), cycle_timeout_lp_pct,
+            win_pool_contribution_pct, win_pool_lp_coverage_pct}
+    tiers: validated via validate_tiers() before calling this.
+
+    Returns {"live_status": {...state for the NEXT order, including
+    final_stake...}, "trade_log": [...one row per real trade or forced cycle
+    timeout...], "summary": {...}}.
+    """
+    starting_balance = float(money.get("starting_balance", 0.0))
+    base_stake = float(money["base_stake"])
+    static_lp_pct = float(money["static_lp_pct"])
+    max_first_order_stake = money.get("max_first_order_stake")
+    max_first_order_stake = float(max_first_order_stake) if max_first_order_stake else None
+    maximum_cycle_orders = int(money["maximum_cycle_orders"])
+    fallback_mode = money["fallback_mode"]
+    cycle_timeout_lp_pct = float(money["cycle_timeout_lp_pct"])
+    win_pool_contribution_pct = float(money["win_pool_contribution_pct"])
+    win_pool_lp_coverage_pct = float(money["win_pool_lp_coverage_pct"])
+
+    sorted_tiers = sorted(tiers, key=lambda t: int(t["start"]))
+    last_tier_idx = len(sorted_tiers)
+    last_tier_pct = float(sorted_tiers[-1]["pct"])
+    last_tier_label = f"Tier {last_tier_idx} ({int(sorted_tiers[-1]['start'])}-{int(sorted_tiers[-1]['end'])}, continued)"
 
     balance = starting_balance
-    loss_basket = 0.0
-    realized_profit = 0.0
-    recovered_profit = 0.0
-    peak_balance = starting_balance
-    max_drawdown_pct = 0.0
+    cycle_id = 1
+    cycle_order_number = 1
+    temporary_cycle_loss = 0.0
+    permanent_loss_pool = 0.0
+    win_pool = 0.0
     consecutive_losses = 0
     max_consecutive_losses = 0
-    consecutive_wins = 0
-    max_consecutive_wins = 0
-    wins_since_reset = 0
-    biggest_loss_basket = 0.0
-    max_trade_amount_used = 0.0
-    trade_amounts: list[float] = []
-
-    wins = losses = 0
+    wins = losses = cycle_timeouts = 0
     trade_rows = []
-    curve_time, curve_balance, curve_basket, curve_trade_amt = [], [], [], []
-    bankrupt = False
-    bankrupt_trade_num = None
-    bankrupt_time = None
+    halted = False
+    halt_reason = None
 
     for t in trades:
         result = t["result"]
         if result not in ("WIN", "LOSS"):
-            continue   # real trades only ever settle WIN/LOSS (see trade_engine._finalize) — defensive skip
+            continue   # real trades only ever settle WIN/LOSS — defensive skip
 
-        recovery_pct = _recovery_pct_for(loss_basket, base_trade, dynamic_mode, fixed_recovery_pct)
-        recovery_addon = loss_basket * recovery_pct
-        trade_amount = min(base_trade + recovery_addon, max_trade_amount)
+        if halted:
+            break
 
+        position_used = cycle_order_number
+        cycle_id_used = cycle_id
+        temp_loss_before = temporary_cycle_loss
+        perm_pool_before = permanent_loss_pool
+        win_pool_before = win_pool
         balance_before = balance
-        loss_basket_before = loss_basket
-        trade_profit_factor = None
+
+        tier_idx, tier_pct, tier_label = _tier_for_position(position_used, sorted_tiers)
+        if tier_idx is None:
+            if fallback_mode == "continue":
+                tier_pct, tier_label = last_tier_pct, last_tier_label
+            elif fallback_mode == "stop":
+                cycle_timeouts += 1
+                transferred_to_pool = temp_loss_before * cycle_timeout_lp_pct
+                permanent_loss_pool = perm_pool_before + transferred_to_pool
+                temporary_cycle_loss = 0.0
+                cycle_order_number = 1
+                cycle_id = cycle_id_used + 1
+                consecutive_losses = 0
+
+                trade_rows.append({
+                    "time": t["time"], "cycle_id": cycle_id_used, "order_number_in_cycle": position_used,
+                    "result": "CYCLE_TIMEOUT", "direction": t.get("direction"),
+                    "recovery_tier": "MAX CYCLE ORDERS REACHED", "recovery_percentage": cycle_timeout_lp_pct,
+                    "temporary_loss_before": temp_loss_before, "base_or_cycle_stake": 0.0,
+                    "permanent_pool_before": perm_pool_before, "pool_recovery_stake": 0.0,
+                    "final_stake": 0.0, "actual_payout": 0.0, "net_profit_or_loss": 0.0,
+                    "temporary_loss_after": 0.0, "recovered_from_cycle": 0.0,
+                    "transferred_to_pool": transferred_to_pool, "recovered_from_pool": 0.0,
+                    "permanent_pool_after": permanent_loss_pool,
+                    "win_pool_before": win_pool_before, "win_pool_contribution": 0.0,
+                    "win_pool_lp_payment": 0.0, "win_pool_after": win_pool,
+                    "balance_before": balance_before, "balance_after": balance_before,
+                })
+                continue
+            else:   # "manual" — halts; a live redeploy of money-management state requires
+                     # a human to change the tiers/max-orders config, not an automatic reset.
+                halted = True
+                halt_reason = (f"Cycle order #{position_used} exceeds Maximum Cycle Orders "
+                                f"({maximum_cycle_orders}) and fallback mode is 'Reset only after manual "
+                                f"confirmation'. No further sizing is possible until the tier configuration "
+                                f"or Maximum Cycle Orders is changed — cycle #{cycle_id_used} left with "
+                                f"${temp_loss_before:.2f} of unresolved temporary cycle loss.")
+                break
+
+        if position_used == 1:
+            lp_addon = perm_pool_before * static_lp_pct
+            raw_stake = base_stake + lp_addon
+            final_stake = min(raw_stake, max_first_order_stake) if max_first_order_stake and raw_stake > max_first_order_stake else raw_stake
+            base_component = min(base_stake, final_stake)
+            lp_component = final_stake - base_component
+        else:
+            recovery_stake = temp_loss_before * tier_pct
+            final_stake = max(base_stake, recovery_stake)
+            base_component = final_stake
+            lp_component = 0.0
+
+        recovered_from_cycle = transferred_to_pool = recovered_from_pool = actual_payout = 0.0
+        win_pool_contribution = win_pool_lp_payment = 0.0
 
         if result == "LOSS":
             losses += 1
-            realized_profit -= trade_amount
-            loss_basket += trade_amount
-            balance -= trade_amount
+            temporary_cycle_loss = temp_loss_before + final_stake
+            balance = balance_before - final_stake
+            net_profit_or_loss = -final_stake
+            cycle_order_number = position_used + 1
             consecutive_losses += 1
             max_consecutive_losses = max(max_consecutive_losses, consecutive_losses)
-            consecutive_wins = 0
-            recovered_this_trade = 0.0
-            profit_added_this_trade = -trade_amount
         else:
             wins += 1
-            trade_profit_factor = obe.profit_factor(t["entry_price"])
-            gross_win = trade_amount * trade_profit_factor
-            balance += gross_win
-            recovery_part = gross_win * profit_split_recovery_pct
-            profit_part = gross_win - recovery_part
-            loss_basket = max(0.0, loss_basket - recovery_part)
-            realized_profit += profit_part
-            recovered_profit += recovery_part
-            consecutive_wins += 1
-            max_consecutive_wins = max(max_consecutive_wins, consecutive_wins)
+            entry_price = t.get("entry_price")
+            trade_profit_factor = obe.profit_factor(entry_price) if entry_price else 0.0
+            actual_payout = final_stake * trade_profit_factor
+
+            win_pool_contribution = actual_payout * win_pool_contribution_pct
+            win_pool = win_pool_before + win_pool_contribution
+            remaining_payout = actual_payout - win_pool_contribution
+
+            cycle_share = (base_component / final_stake) if final_stake > 0 else 1.0
+            cycle_profit = remaining_payout * cycle_share
+            lp_profit = remaining_payout - cycle_profit
+
+            recovered_from_cycle = min(temp_loss_before, cycle_profit)
+            transferred_to_pool = max(0.0, temp_loss_before - recovered_from_cycle)
+            pool_after_transfer = perm_pool_before + transferred_to_pool
+
+            recovered_from_pool = min(pool_after_transfer, lp_profit)
+            permanent_loss_pool = max(0.0, pool_after_transfer - recovered_from_pool)
+
+            win_pool_lp_payment = min(win_pool, permanent_loss_pool * win_pool_lp_coverage_pct)
+            permanent_loss_pool = max(0.0, permanent_loss_pool - win_pool_lp_payment)
+            win_pool = max(0.0, win_pool - win_pool_lp_payment)
+
+            balance = balance_before + actual_payout
+            net_profit_or_loss = actual_payout
+            temporary_cycle_loss = 0.0
+            cycle_order_number = 1
+            cycle_id = cycle_id_used + 1
             consecutive_losses = 0
-            wins_since_reset += 1
-            recovered_this_trade = recovery_part
-            profit_added_this_trade = profit_part
-
-        if reset_mode == "after_n_wins" and reset_after_n_wins > 0 and wins_since_reset >= reset_after_n_wins:
-            loss_basket = 0.0
-            wins_since_reset = 0
-        # "on_zero" and "never" both rely on the max(0, ...) floor above — no
-        # separate forced-reset event for either; "after_n_wins" is the only
-        # mode that forces an early reset before the basket organically pays down.
-
-        biggest_loss_basket = max(biggest_loss_basket, loss_basket)
-        max_trade_amount_used = max(max_trade_amount_used, trade_amount)
-        trade_amounts.append(trade_amount)
-
-        peak_balance = max(peak_balance, balance)
-        drawdown_pct = ((peak_balance - balance) / peak_balance * 100.0) if peak_balance > 0 else 0.0
-        max_drawdown_pct = max(max_drawdown_pct, drawdown_pct)
 
         trade_rows.append({
-            "trade_num": len(trade_rows) + 1, "time": t["time"], "direction": t.get("direction"),
-            "result": result, "entry_price": t.get("entry_price"), "profit_factor": trade_profit_factor,
-            "base_trade_amount": base_trade, "recovery_addon": recovery_addon, "trade_amount": trade_amount,
-            "balance_before": balance_before, "balance_after": balance, "pnl": balance - balance_before,
-            "loss_basket_before": loss_basket_before, "loss_basket_after": loss_basket,
-            "recovery_pct_used": recovery_pct, "recovered_amount": recovered_this_trade,
-            "realized_profit_added": profit_added_this_trade,
+            "time": t["time"], "cycle_id": cycle_id_used, "order_number_in_cycle": position_used,
+            "result": result, "direction": t.get("direction"),
+            "recovery_tier": tier_label, "recovery_percentage": tier_pct,
+            "temporary_loss_before": temp_loss_before, "base_or_cycle_stake": base_component,
+            "permanent_pool_before": perm_pool_before, "pool_recovery_stake": lp_component,
+            "final_stake": final_stake, "actual_payout": actual_payout,
+            "net_profit_or_loss": net_profit_or_loss, "temporary_loss_after": temporary_cycle_loss,
+            "recovered_from_cycle": recovered_from_cycle, "transferred_to_pool": transferred_to_pool,
+            "recovered_from_pool": recovered_from_pool, "permanent_pool_after": permanent_loss_pool,
+            "win_pool_before": win_pool_before, "win_pool_contribution": win_pool_contribution,
+            "win_pool_lp_payment": win_pool_lp_payment, "win_pool_after": win_pool,
+            "balance_before": balance_before, "balance_after": balance,
         })
 
-        curve_time.append(t["time"])
-        curve_balance.append(balance)
-        curve_basket.append(loss_basket)
-        curve_trade_amt.append(trade_amount)
+    # Preview of the NEXT order this configuration would place, given the state the walk ended in.
+    next_position = cycle_order_number
+    next_tier_idx, next_tier_pct, next_tier_label = _tier_for_position(next_position, sorted_tiers)
+    if next_tier_idx is None:
+        if fallback_mode == "continue":
+            next_tier_pct, next_tier_label = last_tier_pct, last_tier_label
+        else:
+            next_tier_label = "MAX REACHED — halted, awaiting manual reset"
 
-        # 100%+ drawdown = balance has hit zero or gone negative — stop
-        # replaying further trades (there is no money left to fund another
-        # one) and flag it clearly for the summary, exactly like the
-        # original simulator.
-        if balance <= 0:
-            bankrupt = True
-            bankrupt_trade_num = trade_rows[-1]["trade_num"]
-            bankrupt_time = int(t["time"])
-            break
+    if halted and fallback_mode != "continue" and next_tier_idx is None:
+        next_base_component = next_lp_component = next_final_stake = None
+    elif next_position == 1:
+        next_lp_addon = permanent_loss_pool * static_lp_pct
+        next_raw_stake = base_stake + next_lp_addon
+        next_final_stake = min(next_raw_stake, max_first_order_stake) \
+            if max_first_order_stake and next_raw_stake > max_first_order_stake else next_raw_stake
+        next_base_component = min(base_stake, next_final_stake)
+        next_lp_component = next_final_stake - next_base_component
+    else:
+        next_final_stake = max(base_stake, temporary_cycle_loss * next_tier_pct)
+        next_base_component = next_final_stake
+        next_lp_component = 0.0
 
-    total_trades = wins + losses
-    summary = {
-        "starting_balance": starting_balance, "ending_balance": balance,
-        "net_pnl": balance - starting_balance,
-        "roi_pct": ((balance - starting_balance) / starting_balance * 100.0) if starting_balance else 0.0,
-        "total_trades": total_trades, "wins": wins, "losses": losses,
-        "win_rate": (wins / total_trades * 100.0) if total_trades else 0.0,
-        "max_consecutive_losses": max_consecutive_losses, "max_consecutive_wins": max_consecutive_wins,
-        "current_loss_streak": consecutive_losses,
-        "biggest_loss_basket": biggest_loss_basket, "final_loss_basket": loss_basket,
-        "max_trade_amount_used": max_trade_amount_used,
-        "average_trade_amount": (sum(trade_amounts) / len(trade_amounts)) if trade_amounts else 0.0,
-        "total_recovered_amount": recovered_profit, "total_realized_profit": realized_profit,
-        "max_drawdown_pct": max_drawdown_pct,
-        "bankrupt": bankrupt, "bankrupt_trade_num": bankrupt_trade_num, "bankrupt_time": bankrupt_time,
+    live_status = {
+        "cycle_order_number": cycle_order_number, "consecutive_losses": consecutive_losses,
+        "temporary_cycle_loss": temporary_cycle_loss, "active_recovery_tier": next_tier_label,
+        "active_recovery_percentage": next_tier_pct, "base_or_cycle_stake": next_base_component,
+        "permanent_loss_pool": permanent_loss_pool, "static_lp_pct": static_lp_pct,
+        "loss_pool_extra_stake": next_lp_component, "final_stake": next_final_stake,
+        "max_first_order_stake": max_first_order_stake,
+        "maximum_cycle_orders": maximum_cycle_orders, "fallback_mode": fallback_mode,
+        "win_pool": win_pool, "win_pool_contribution_pct": win_pool_contribution_pct,
+        "win_pool_lp_coverage_pct": win_pool_lp_coverage_pct,
+        "halted": halted, "halt_reason": halt_reason,
     }
-    curves = {"time": curve_time, "balance": curve_balance, "loss_basket": curve_basket,
-              "trade_amount": curve_trade_amt}
-    return {"summary": summary, "trade_log": trade_rows, "curves": curves}
+
+    resolved = wins + losses
+    summary = {
+        "starting_balance": starting_balance, "ending_balance": balance, "net_pnl": balance - starting_balance,
+        "roi_pct": ((balance - starting_balance) / starting_balance * 100.0) if starting_balance else 0.0,
+        "total_trades": resolved, "wins": wins, "losses": losses, "cycle_timeouts": cycle_timeouts,
+        "win_rate": (wins / resolved * 100.0) if resolved else 0.0,
+        "max_consecutive_losses": max_consecutive_losses,
+        "final_temporary_cycle_loss": temporary_cycle_loss, "final_permanent_loss_pool": permanent_loss_pool,
+        "final_win_pool": win_pool,
+    }
+
+    return {"live_status": live_status, "trade_log": trade_rows, "summary": summary}
 
 
 def hourly_balance_curve(trade_log: list[dict], starting_balance: float) -> list[dict]:
     """
     Balance bucketed to the hour, carried forward through any empty hours —
-    "how the balance is changing every hour". Mirrors the original
-    simulator's time_bucketed_breakdown(), simplified to hourly-only and to
-    the balance line (Tab 6 doesn't need the weekly/monthly trade-count view).
+    "how the balance is changing every hour". Tab 6's chart wants this
+    instead of one point per trade, same as before the tiered rewrite —
+    trade_log rows still carry "time"/"balance_after", so this needs no
+    changes for the new tiered trade_log shape.
     """
     if not trade_log:
         return []
@@ -217,41 +359,18 @@ def hourly_balance_curve(trade_log: list[dict], starting_balance: float) -> list
     return out
 
 
-def trades_from_db_rows(rows: list[dict]) -> list[dict]:
-    """
-    Converts trade_db rows (as returned by trade_db.fetch_all_trades(),
-    newest-first) into the chronological (oldest -> newest) {"time","result",
-    "entry_price","direction"} list run_simulation() expects. The single
-    shared conversion — both Tab 6's display and Tab 3's live sizing (see
-    next_trade_amount()) call this so they can never drift out of sync with
-    each other.
-    """
-    return [
-        {"time": r["entry_time"], "result": r["final_result"], "entry_price": r["entry_price"],
-         "direction": "YES" if r["direction"] == 1 else "NO"}
-        for r in reversed(rows)
-    ]
-
-
-def next_trade_amount(db_rows: list[dict], money: dict) -> float:
+def next_trade_amount_tiered(db_rows: list[dict], money: dict, tiers: list[dict]) -> dict:
     """
     The exact dollar stake Tab 3's trade engine should use for its NEXT real
-    trade — the same sizing formula run_simulation() applies to every
-    replayed trade, evaluated against the loss basket left behind by every
-    trade settled so far. This is what makes Tab 3's real trades "go through
-    money management" using whatever settings are currently applied on
-    Tab 6: both read the exact same trade_db history and the exact same
-    mm_settings, so there is no separate persisted balance/loss-basket state
-    to keep in sync — it's derived fresh, the same way, every time.
+    trade, plus the full cycle state — the same tiered sizing formula
+    replay_tiered() applies to every replayed trade, evaluated against the
+    cycle/pool state left behind by every trade settled so far. Like the
+    system it replaces, this needs no separately-tracked balance/cycle state
+    — it's derived fresh, the same way, every time (see replay_tiered's
+    docstring). Returns replay_tiered()'s full result dict; callers that
+    just need the stake read result["live_status"]["final_stake"] (None if
+    fallback_mode is "manual" and the cycle is halted awaiting a config
+    change — callers must treat that as "do not enter").
     """
-    base_trade = float(money["base_trade_amount"])
-    max_trade_amount = float(money["max_trade_amount"])
-    dynamic_mode = bool(money["dynamic_mode"])
-    fixed_recovery_pct = float(money["recovery_percent"])
-
     trades = trades_from_db_rows(db_rows)
-    loss_basket = run_simulation(trades, money)["summary"]["final_loss_basket"] if trades else 0.0
-
-    recovery_pct = _recovery_pct_for(loss_basket, base_trade, dynamic_mode, fixed_recovery_pct)
-    recovery_addon = loss_basket * recovery_pct
-    return min(base_trade + recovery_addon, max_trade_amount)
+    return replay_tiered(trades, money, tiers)

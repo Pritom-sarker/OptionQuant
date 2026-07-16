@@ -70,8 +70,10 @@
 
   <div class="field checkbox">
     <input type="checkbox" name="immediate_mode" id="immediate_mode" {{ "checked" if tab3.immediate_mode else "" }}>
-    <label for="immediate_mode">Immediate Entry &amp; Exit — skip order book conditions (pressure, profit factor, spread, liquidity) and enter immediately at the current market price; hold until expiry with no early exit</label>
+    <label for="immediate_mode">Immediate Entry &amp; Exit — skip order book conditions (pressure, spread, liquidity) and enter immediately at the current market price; hold until expiry with no early exit. The Minimum Profit Factor floor below still applies — entry waits until it's cleared.</label>
   </div>
+  <div class="field"><label>Immediate Entry Window (± sec around candle open)</label><input type="number" name="immediate_entry_window_sec" value="{{ tab3.immediate_entry_window_sec }}" min="1" max="120"></div>
+  <div class="caption" style="grid-column: 1 / -1;">Immediate Entry only buys from this many seconds before the candle opens to this many seconds after — outside that window it holds off even if the profit factor floor is met (the candidate keeps observing until Entry Deadline above eventually skips it).</div>
 
   <div class="form-actions"><button type="submit">Apply Live Trades Settings</button></div>
 </form>

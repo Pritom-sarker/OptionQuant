@@ -92,6 +92,7 @@ class AppState:
             "pressure_threshold": config.DEFAULT_TAB3_PRESSURE_THRESHOLD,
             "depth_stable_tolerance": config.DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE,
             "immediate_mode": config.DEFAULT_TAB3_IMMEDIATE_MODE,
+            "immediate_entry_window_sec": config.DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC,
             "entry_deadline_sec": config.DEFAULT_TAB3_ENTRY_DEADLINE_SEC,
         }
         # Each slot is {"candidate": TradeCandidate, "trade": Optional[ActiveTrade]} —
@@ -103,19 +104,20 @@ class AppState:
         self.tab3_last_chart_refresh: float = 0.0   # gates chart image regeneration only — values are always live
         self.tab3_market_ok: bool = False
 
-        # Tab 6 — Money Management Simulator (replays trade_db's real settled
-        # trades through the same sizing/loss-basket formulas as
-        # pine_strategy_simulator's Money Management tab — see money_management.py)
+        # Tab 6 — Money Management (replays trade_db's real settled trades
+        # through the tiered cycle/win-pool formulas — see money_management.py)
         self.mm_settings: dict = {
             "starting_balance": config.DEFAULT_MM_STARTING_BALANCE,
-            "base_trade_amount": config.DEFAULT_MM_BASE_TRADE_AMOUNT,
-            "max_trade_amount": config.DEFAULT_MM_MAX_TRADE_AMOUNT,
-            "recovery_percent": config.DEFAULT_MM_RECOVERY_PERCENT,
-            "dynamic_mode": config.DEFAULT_MM_DYNAMIC_MODE,
-            "profit_split_recovery_pct": config.DEFAULT_MM_PROFIT_SPLIT_RECOVERY,
-            "reset_mode": config.DEFAULT_MM_RESET_MODE,
-            "reset_after_n_wins": config.DEFAULT_MM_RESET_AFTER_N_WINS,
+            "base_stake": config.DEFAULT_MM_BASE_STAKE,
+            "static_lp_pct": config.DEFAULT_MM_STATIC_LP_PCT,
+            "max_first_order_stake": config.DEFAULT_MM_MAX_FIRST_ORDER_STAKE,
+            "maximum_cycle_orders": config.DEFAULT_MM_MAXIMUM_CYCLE_ORDERS,
+            "fallback_mode": config.DEFAULT_MM_FALLBACK_MODE,
+            "cycle_timeout_lp_pct": config.DEFAULT_MM_CYCLE_TIMEOUT_LP_PCT,
+            "win_pool_contribution_pct": config.DEFAULT_MM_WIN_POOL_CONTRIBUTION_PCT,
+            "win_pool_lp_coverage_pct": config.DEFAULT_MM_WIN_POOL_LP_COVERAGE_PCT,
         }
+        self.mm_tiers: list = [dict(t) for t in config.DEFAULT_MM_TIERS]
 
         load_settings_from_disk(self)
 
@@ -132,6 +134,8 @@ def load_settings_from_disk(target: "AppState") -> None:
         target.tab3_settings.update(saved["tab3_settings"])
     if "mm_settings" in saved:
         target.mm_settings.update(saved["mm_settings"])
+    if "mm_tiers" in saved:
+        target.mm_tiers = saved["mm_tiers"]
 
 
 def save_settings() -> None:
@@ -141,7 +145,7 @@ def save_settings() -> None:
     Railway-redeploy caveat)."""
     with state.lock:
         payload = {"tab1_settings": state.tab1_settings, "tab3_settings": state.tab3_settings,
-                   "mm_settings": state.mm_settings}
+                   "mm_settings": state.mm_settings, "mm_tiers": state.mm_tiers}
     try:
         with open(SETTINGS_PATH, "w") as f:
             json.dump(payload, f, indent=2)

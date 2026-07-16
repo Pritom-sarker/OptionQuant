@@ -17,10 +17,10 @@
   </div>
 </div>
 
-{% if summary.bankrupt %}
+{% if live_status.halted %}
 <div class="callout" style="border-left-color: var(--red);">
-  <strong>ACCOUNT WIPED OUT — 100%+ drawdown.</strong> Balance reached ${{ "%.2f"|format(summary.ending_balance) }}
-  on trade #{{ summary.bankrupt_trade_num }}. Replay stopped here — reduce base trade amount or raise starting balance and re-apply settings.
+  <strong>Money Management is HALTED — no new trades will be sized until this is resolved.</strong><br>
+  {{ live_status.halt_reason }}
 </div>
 {% endif %}
 
@@ -29,33 +29,47 @@
   {{ m.metric("Win Rate", "%.1f%%"|format(summary.win_rate)) }}
   {{ m.metric("Total Trades", summary.total_trades) }}
   {{ m.metric("Max Consec. Losses", summary.max_consecutive_losses) }}
-  {{ m.metric("Loss Pool (current)", "$%.2f"|format(summary.final_loss_basket), value_class="red") }}
-  {{ m.metric("Max Drawdown", "%.2f%%"|format(summary.max_drawdown_pct)) }}
+  {{ m.metric("Cycle Timeouts", summary.cycle_timeouts) }}
+  {{ m.metric("Temporary Cycle Loss", "$%.2f"|format(summary.final_temporary_cycle_loss), value_class="red") }}
+  {{ m.metric("Permanent Loss Pool", "$%.2f"|format(summary.final_permanent_loss_pool), value_class="red") }}
+  {{ m.metric("Win Pool", "$%.2f"|format(summary.final_win_pool), value_class="green") }}
+</div>
+
+<h2 class="section">Next Order Preview</h2>
+<p class="caption">What Live Trades will actually stake on the next BUY signal, given every trade settled so far.</p>
+<div class="metric-grid">
+  {{ m.metric("Cycle Order #", live_status.cycle_order_number ~ " / " ~ live_status.maximum_cycle_orders) }}
+  {{ m.metric("Active Recovery Tier", live_status.active_recovery_tier or "—") }}
+  {{ m.metric("Next Stake", ("$%.2f"|format(live_status.final_stake) if live_status.final_stake is not none else "HALTED"), value_class=("red" if live_status.final_stake is none else None)) }}
+  {{ m.metric("Consecutive Losses", live_status.consecutive_losses) }}
 </div>
 
 <h2 class="section">Account Balance — Hourly</h2>
 <img data-live="/charts/tab6/balance.png" src="/charts/tab6/balance.png" alt="Account balance over time" style="max-width: 100%;">
 
-<h2 class="section">Loss Pool (Loss Basket)</h2>
-<img data-live="/charts/tab6/loss_basket.png" src="/charts/tab6/loss_basket.png" alt="Loss basket over time" style="max-width: 100%;">
+<h2 class="section">Outstanding Loss (Temporary Cycle Loss + Permanent Pool)</h2>
+<img data-live="/charts/tab6/loss_basket.png" src="/charts/tab6/loss_basket.png" alt="Outstanding loss over time" style="max-width: 100%;">
 
 <h2 class="section">Trade Log (most recent first)</h2>
 <div class="table-scroll">
 <table class="data-table">
-  <thead><tr><th>#</th><th>Time</th><th>Side</th><th>Result</th><th>Entry Price</th><th>Profit Factor</th>
-    <th>Trade Amount</th><th>Balance After</th><th>Loss Basket After</th></tr></thead>
+  <thead><tr><th>Time</th><th>Side</th><th>Cycle</th><th>Order #</th><th>Result</th><th>Tier</th>
+    <th>Stake</th><th>Payout</th><th>Net P/L</th><th>Balance After</th><th>Temp Loss After</th><th>Perm Pool After</th></tr></thead>
   <tbody>
     {% for t in trade_log %}
     <tr>
-      <td>{{ t.trade_num }}</td>
       <td>{{ t.time_str }}</td>
-      <td>{{ t.direction }}</td>
-      <td><span class="badge {{ 'green' if t.result=='WIN' else 'red' }}">{{ t.result }}</span></td>
-      <td>{{ "%.3f"|format(t.entry_price) if t.entry_price is not none else "—" }}</td>
-      <td>{{ "%.2fx"|format(t.profit_factor) if t.profit_factor is not none else "—" }}</td>
-      <td>${{ "%.2f"|format(t.trade_amount) }}</td>
+      <td>{{ t.direction or "—" }}</td>
+      <td>{{ t.cycle_id }}</td>
+      <td>{{ t.order_number_in_cycle }}</td>
+      <td><span class="badge {{ 'green' if t.result=='WIN' else ('red' if t.result=='LOSS' else 'neutral') }}">{{ t.result }}</span></td>
+      <td>{{ t.recovery_tier }}</td>
+      <td>${{ "%.2f"|format(t.final_stake) }}</td>
+      <td>${{ "%.2f"|format(t.actual_payout) }}</td>
+      <td style="color: var(--{{ 'green' if t.net_profit_or_loss >= 0 else 'red' }});">{{ "%+.2f"|format(t.net_profit_or_loss) }}</td>
       <td>${{ "%.2f"|format(t.balance_after) }}</td>
-      <td>${{ "%.2f"|format(t.loss_basket_after) }}</td>
+      <td>${{ "%.2f"|format(t.temporary_loss_after) }}</td>
+      <td>${{ "%.2f"|format(t.permanent_pool_after) }}</td>
     </tr>
     {% endfor %}
   </tbody>

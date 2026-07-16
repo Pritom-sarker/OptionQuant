@@ -454,15 +454,24 @@ def _tick_tab3() -> None:
             no_book = orderbook_api.fetch_order_book(candidate.no_token_id)
             snap = trade_engine.record_candidate_snapshot(candidate, yes_book, no_book, settings)
             if snap["decision"] == "BUY":
-                # Every real trade's stake is sized by Tab 6's Money Management
-                # settings, never a flat number — same sizing formula Tab 6
-                # replays historically, evaluated live against the loss basket
-                # left behind by every trade settled so far (see
-                # money_management.next_trade_amount's docstring for why this
-                # needs no separately-tracked balance/loss-basket state).
+                # Every real trade's stake is sized by Tab 6's tiered Money
+                # Management settings, never a flat number — same sizing
+                # formula Tab 6 replays historically, evaluated live against
+                # the cycle/pool state left behind by every trade settled so
+                # far (see money_management.next_trade_amount_tiered's
+                # docstring for why this needs no separately-tracked state).
                 with state.lock:
                     mm_settings = dict(state.mm_settings)
-                live_stake = mm.next_trade_amount(trade_db.fetch_all_trades(), mm_settings)
+                    mm_tiers = list(state.mm_tiers)
+                mm_result = mm.next_trade_amount_tiered(trade_db.fetch_all_trades(), mm_settings, mm_tiers)
+                live_stake = mm_result["live_status"]["final_stake"]
+                if live_stake is None:
+                    # fallback_mode == "manual" and the cycle is halted awaiting a config
+                    # change — do not risk a stake until a human resolves it.
+                    log.warning("[Tab3] Candidate candle=%s BUY signal held back — money management is halted: %s",
+                                candidate.signal_time, mm_result["live_status"]["halt_reason"])
+                    still_active.append(slot)
+                    continue
                 entry_settings = {**settings, "stake": live_stake}
 
                 trade = trade_engine.enter_trade(candidate, snap, entry_settings)

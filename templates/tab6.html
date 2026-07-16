@@ -4,31 +4,76 @@
 <div class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">Money Management</h1>
-    <p class="caption">Replays every real settled trade from Live Trades/Trade History, oldest to newest, through a loss-basket
-      recovery model, with each win paying out at <strong>that trade's own dynamic profit factor</strong> (from its real entry
-      price) instead of a static profit factor of 1.</p>
+    <p class="caption">Replays every real settled trade from Live Trades/Trade History, oldest to newest, through a tiered
+      cycle/win-pool recovery model — consecutive losses build a <strong>temporary cycle loss</strong>, sized order-by-order
+      via the recovery tiers below; whatever a cycle-ending win doesn't fully recover moves into the <strong>permanent loss
+      pool</strong>, paid down gradually on top of every future order. Every real trade Live Trades places is sized live from
+      these exact settings.</p>
   </div>
   <span class="live-status" id="live-status-tab6"><span class="live-dot" id="live-dot-tab6"></span><span id="live-text-tab6">LIVE</span> — charts refresh every 30s · <span id="live-updated-tab6">last update: —</span></span>
 </div>
 
+{% if tier_save_error %}
+<div class="callout" style="border-left-color: var(--red);">Recovery tiers were not saved — they must start at
+  position 1, be contiguous with no gaps/overlaps, and end exactly at Maximum Cycle Orders. Other settings below were
+  still applied. Fix the tiers and re-submit.</div>
+{% endif %}
+{% if tier_errors %}
+<div class="callout" style="border-left-color: var(--red);">
+  <strong>Currently active tiers are invalid:</strong>
+  <ul style="margin: 6px 0 0 18px;">{% for e in tier_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
 <h2 class="section">Money Management Settings</h2>
 <form class="settings-form" method="post" action="/settings/money_management">
-  <div class="field"><label>Starting Balance ($)</label><input type="number" step="1" min="1" name="starting_balance" value="{{ settings.starting_balance }}"></div>
-  <div class="field"><label>Base Trade Amount ($)</label><input type="number" step="0.1" min="0.01" name="base_trade_amount" value="{{ settings.base_trade_amount }}"></div>
-  <div class="field"><label>Max Trade Amount Cap ($)</label><input type="number" step="1" min="0.01" name="max_trade_amount" value="{{ settings.max_trade_amount }}"></div>
-  <div class="field checkbox"><input type="checkbox" name="dynamic_mode" id="mm_dynamic" {{ "checked" if settings.dynamic_mode else "" }}><label for="mm_dynamic">Dynamic recovery % (overrides fixed % below)</label></div>
-  <div class="field"><label>Fixed Recovery % (used when dynamic is off)</label><input type="number" step="1" min="0" max="100" name="recovery_percent" value="{{ (settings.recovery_percent * 100)|round(1) }}"></div>
-  <div class="field"><label>Win Split → Loss Basket Recovery (%)</label><input type="number" step="1" min="0" max="100" name="profit_split_recovery_pct" value="{{ (settings.profit_split_recovery_pct * 100)|round(1) }}"></div>
+  <div class="field"><label>Starting Balance ($) — display only</label><input type="number" step="1" min="1" name="starting_balance" value="{{ settings.starting_balance }}"></div>
+  <div class="field"><label>Base Stake ($) — order 1 of every new cycle</label><input type="number" step="0.1" min="0.01" name="base_stake" value="{{ settings.base_stake }}"></div>
+  <div class="field"><label>Net Profit Ratio</label><input type="number" step="0.05" min="0.01" value="1.0" disabled>
+    <span class="caption" style="margin:0;">Live trades always use each trade's own real payout, not a fixed ratio.</span></div>
+  <div class="field"><label>Maximum Cycle Orders</label><input type="number" step="1" min="1" name="maximum_cycle_orders" value="{{ settings.maximum_cycle_orders }}"></div>
   <div class="field">
-    <label>Loss Basket Reset</label>
-    <select name="reset_mode">
-      <option value="never" {{ "selected" if settings.reset_mode == "never" else "" }}>Never reset</option>
-      <option value="on_zero" {{ "selected" if settings.reset_mode == "on_zero" else "" }}>Reset when loss basket becomes 0</option>
-      <option value="after_n_wins" {{ "selected" if settings.reset_mode == "after_n_wins" else "" }}>Reset after N winning trades</option>
+    <label>When Maximum Cycle Orders Is Reached</label>
+    <select name="fallback_mode">
+      <option value="stop" {{ "selected" if settings.fallback_mode == "stop" else "" }}>Stop new orders (force-close the cycle)</option>
+      <option value="continue" {{ "selected" if settings.fallback_mode == "continue" else "" }}>Continue using the final tier percentage</option>
+      <option value="manual" {{ "selected" if settings.fallback_mode == "manual" else "" }}>Reset only after manual confirmation (halts entries)</option>
     </select>
   </div>
-  <div class="field"><label>Reset after N wins</label><input type="number" step="1" min="1" name="reset_after_n_wins" value="{{ settings.reset_after_n_wins }}"></div>
-  <div class="caption" style="grid-column: 1 / -1;">Dynamic mode: recovery % = 25% while loss basket &lt;= 5x base trade, 15% &lt;= 10x, 10% &lt;= 20x, 5% beyond that — the fixed % above is ignored.</div>
+  <div class="field"><label>Max-Cycle Timeout — % Of Unresolved Loss Sent To Permanent Pool</label><input type="number" step="1" min="0" max="100" name="cycle_timeout_lp_pct" value="{{ (settings.cycle_timeout_lp_pct * 100)|round(1) }}"></div>
+
+  <div class="field"><label>Static LP % Added To Order 1 (of the permanent pool)</label><input type="number" step="1" min="0" max="100" name="static_lp_pct" value="{{ (settings.static_lp_pct * 100)|round(1) }}"></div>
+  <div class="field"><label>Max First Order Size ($) — caps base + LP add-on</label><input type="number" step="0.1" min="0.01" name="max_first_order_stake" value="{{ settings.max_first_order_stake }}"></div>
+  <div class="field"><label>Win Pool Contribution % (of each win's profit)</label><input type="number" step="1" min="0" max="100" name="win_pool_contribution_pct" value="{{ (settings.win_pool_contribution_pct * 100)|round(1) }}"></div>
+  <div class="field"><label>Win Pool LP Coverage % (of permanent pool paid from win pool)</label><input type="number" step="1" min="0" max="100" name="win_pool_lp_coverage_pct" value="{{ (settings.win_pool_lp_coverage_pct * 100)|round(1) }}"></div>
+
+  <div class="caption" style="grid-column: 1 / -1;">Order 1's stake = Base Stake + (Permanent Pool × Static LP %), capped at Max First Order Size. Order 2+ = max(Base Stake, Temporary Cycle Loss × the tier % for that order number below).</div>
+
+  <div style="grid-column: 1 / -1;">
+    <label style="font-size: 12px; color: var(--text-dim); font-weight: 500; display:block; margin-bottom:6px;">Recovery Tiers — must start at 1, be contiguous, and end exactly at Maximum Cycle Orders</label>
+    <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>Start</th><th>End</th><th>Recovery %</th></tr></thead>
+      <tbody>
+        {% for t in tiers %}
+        <tr>
+          <td><input type="number" step="1" min="1" name="tier_start" value="{{ t.start }}" style="width:70px;"></td>
+          <td><input type="number" step="1" min="1" name="tier_end" value="{{ t.end }}" style="width:70px;"></td>
+          <td><input type="number" step="1" min="0" max="100" name="tier_pct" value="{{ (t.pct * 100)|round(1) }}" style="width:80px;"></td>
+        </tr>
+        {% endfor %}
+        {% for _ in range(3) %}
+        <tr>
+          <td><input type="number" step="1" min="1" name="tier_start" placeholder="—" style="width:70px;"></td>
+          <td><input type="number" step="1" min="1" name="tier_end" placeholder="—" style="width:70px;"></td>
+          <td><input type="number" step="1" min="0" max="100" name="tier_pct" placeholder="—" style="width:80px;"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
   <div class="form-actions"><button type="submit">Apply Money Management Settings</button></div>
 </form>
 

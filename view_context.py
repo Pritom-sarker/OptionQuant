@@ -431,28 +431,40 @@ def build_tab5_context() -> dict:
 def build_money_management_context() -> dict:
     """
     Tab 6 — replays trade_db's real settled trades (oldest -> newest) through
-    money_management.run_simulation() using the currently-applied mm
-    settings. Recomputed fresh on every call (like Tab 5) rather than cached
-    — trade counts here are small enough that replaying the whole history
-    every poll is cheap, and it guarantees the balance always reflects the
-    latest settled trade plus whatever settings are currently applied.
+    money_management.replay_tiered() using the currently-applied tiered mm
+    settings/tiers. Recomputed fresh on every call (like Tab 5) rather than
+    cached — trade counts here are small enough that replaying the whole
+    history every poll is cheap, and it guarantees the balance/live-status
+    preview always reflects the latest settled trade plus whatever settings
+    are currently applied.
     """
     settings = dict(state.mm_settings)
+    tiers = [dict(t) for t in state.mm_tiers]
+    tier_errors = mm.validate_tiers(tiers, settings["maximum_cycle_orders"])
+
     db_rows = trade_db.fetch_all_trades()
     if not db_rows:
-        return {"has_trades": False, "settings": settings}
+        return {"has_trades": False, "settings": settings, "tiers": tiers, "tier_errors": tier_errors}
 
     sim_trades = mm.trades_from_db_rows(db_rows)
-    result = mm.run_simulation(sim_trades, settings)
+    result = mm.replay_tiered(sim_trades, settings, tiers)
     hourly = mm.hourly_balance_curve(result["trade_log"], settings["starting_balance"])
 
     summary = result["summary"]
+    live_status = result["live_status"]
     trade_log = result["trade_log"]
+    # "loss basket" chart = total outstanding recovery debt (still-open cycle loss
+    # plus whatever the permanent pool carries forward) after each replayed trade.
+    curves = {
+        "time": [row["time"] for row in trade_log],
+        "loss_basket": [row["temporary_loss_after"] + row["permanent_pool_after"] for row in trade_log],
+    }
     for row in trade_log:
         row["time_str"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["time"]))
     return {
-        "has_trades": True, "settings": settings, "summary": summary,
-        "hourly": hourly, "curves": result["curves"],
+        "has_trades": True, "settings": settings, "tiers": tiers, "tier_errors": tier_errors,
+        "summary": summary, "live_status": live_status,
+        "hourly": hourly, "curves": curves,
         "trade_log": list(reversed(trade_log))[:100],   # newest first for display, capped like Tab 5's recent list
     }
 

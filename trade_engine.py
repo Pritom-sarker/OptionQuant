@@ -221,9 +221,28 @@ def _decide_entry(candidate: TradeCandidate, calc: dict, settings: dict) -> tupl
     price = calc["price"]
 
     if settings.get("immediate_mode"):
+        window_sec = settings["immediate_entry_window_sec"]
+        since_open = time.time() - candidate.signal_time   # negative = before the candle has actually opened yet
+
+        if since_open < -window_sec or since_open > window_sec:
+            reason = (f"Immediate Entry & Exit mode is ON but we're {since_open:+.0f}s relative to candle open — "
+                       f"outside the ±{window_sec:.0f}s entry window, holding off (still watching in case "
+                       f"the window hasn't opened yet).")
+            return "IMMEDIATE", "WAIT", reason
+
+        pf_ok = calc["profit_factor"] >= settings["min_profit_factor"]
+        if not pf_ok:
+            reason = (f"Immediate Entry & Exit mode is ON and within the ±{window_sec:.0f}s entry window "
+                       f"({since_open:+.0f}s from open), but profit factor {calc['profit_factor']:.3f} is below "
+                       f"the floor {settings['min_profit_factor']:.2f} at price {price:.3f} — holding off "
+                       f"(still skipping pressure/spread/liquidity) until profit factor recovers.")
+            return "IMMEDIATE", "WAIT", reason
+
         reason = (f"Immediate Entry & Exit mode is ON — entering immediately at the current market price "
-                   f"{price:.3f} with no order-book conditions (pressure, profit factor, spread, liquidity) "
-                   f"and no waiting. Will hold until the market expires — no early exit.")
+                   f"{price:.3f} ({since_open:+.0f}s from candle open, within the ±{window_sec:.0f}s window; "
+                   f"profit factor {calc['profit_factor']:.3f} clears the {settings['min_profit_factor']:.2f} floor) "
+                   f"with no other order-book conditions (pressure, spread, liquidity) and no waiting. "
+                   f"Will hold until the market expires — no early exit.")
         return "IMMEDIATE", "BUY", reason
 
     if price > settings["hard_block_price"]:

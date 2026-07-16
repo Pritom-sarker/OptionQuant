@@ -161,6 +161,14 @@ DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE = 0.10    # Mode 1 "ask depth stable" — ma
 # see _decide_entry in trade_engine.py.
 DEFAULT_TAB3_IMMEDIATE_MODE = False
 
+# Immediate Entry only fires within this many seconds of the candle's actual
+# open (candidate.signal_time) — from signal_time - window to signal_time +
+# window. Outside that window it holds off (WAIT) even if the profit factor
+# floor is met; still bounded overall by entry_deadline_sec above, which
+# eventually drops the candidate as SKIPPED_LATE if it never lines up.
+# Configurable on Settings (Tab 3).
+DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC = 10
+
 # Backstop for signals that still land late despite Early Entry (see Tab 1's
 # early-entry settings above): once a candidate's predicted window has
 # actually opened (time.time() >= candidate.signal_time), it gets this many
@@ -176,20 +184,30 @@ DEFAULT_TAB3_ENTRY_DEADLINE_SEC = 130
 
 TAB3_SNAPSHOT_HISTORY_MAX = 2000   # bounded in-memory rolling history per candidate/trade
 
-# ─── Tab 6: Money Management Simulator ──────────────────────────────────────
-# Ported from pine_strategy_simulator/money_management.py's "Money Management
-# Simulator" tab — identical sizing/loss-basket/recovery formulas, same
-# settings. Only one deliberate change: that version assumed every WIN pays
-# out at a static profit factor of 1 (gross_win = trade_amount flat, i.e. as
-# if every contract were bought at exactly $0.50). This version replays the
-# app's own REAL settled trades (trade_db), so it uses each trade's own
-# actual entry price via orderbook_engine.profit_factor() instead — a $0.30
-# entry pays a different multiple than a $0.60 one, same as real money would.
-DEFAULT_MM_STARTING_BALANCE        = 1000.0
-DEFAULT_MM_BASE_TRADE_AMOUNT       = 1.0
-DEFAULT_MM_MAX_TRADE_AMOUNT        = 10.0
-DEFAULT_MM_RECOVERY_PERCENT        = 0.10   # 10% — used only when dynamic_mode is off
-DEFAULT_MM_DYNAMIC_MODE            = False
-DEFAULT_MM_PROFIT_SPLIT_RECOVERY   = 0.50   # 50% of each win's profit pays down the loss basket
-DEFAULT_MM_RESET_MODE              = "never"   # "never" | "on_zero" | "after_n_wins"
-DEFAULT_MM_RESET_AFTER_N_WINS      = 5
+# ─── Tab 6: Money Management ─────────────────────────────────────────────────
+# Tiered cycle/win-pool sizing — ported from pine_strategy_simulator/
+# money_management.py::run_tiered_simulation (validated there against the
+# Order-1-10 sequence and an adversarial repeated-loss scenario). Every real
+# trade Tab 3 places is sized live from this (see
+# money_management.next_trade_amount_tiered and
+# background_worker._tick_tab3) — this replays the app's own REAL settled
+# trades (trade_db) each time, using each trade's own actual entry price via
+# orderbook_engine.profit_factor() for WIN payout/recovery accounting (a
+# $0.30 entry pays a different multiple than a $0.60 one, same as real money
+# would); stake SIZING itself never divides by a profit factor, since an
+# upcoming trade's own price is unknowable in advance — see
+# money_management.py's module docstring.
+DEFAULT_MM_STARTING_BALANCE        = 1000.0   # display only — does not affect sizing
+DEFAULT_MM_BASE_STAKE              = 1.0      # order 1 of every new cycle
+DEFAULT_MM_STATIC_LP_PCT           = 0.20     # % of the permanent pool added to order 1 only
+DEFAULT_MM_MAX_FIRST_ORDER_STAKE   = 3.0      # caps order 1's base + LP add-on combined
+DEFAULT_MM_MAXIMUM_CYCLE_ORDERS    = 10
+DEFAULT_MM_FALLBACK_MODE           = "stop"   # "stop" | "continue" | "manual"
+DEFAULT_MM_CYCLE_TIMEOUT_LP_PCT    = 0.20     # % of a maxed-out cycle's loss sent to the LP; rest written off
+DEFAULT_MM_WIN_POOL_CONTRIBUTION_PCT = 0.20   # % of every win's profit set aside into the win pool
+DEFAULT_MM_WIN_POOL_LP_COVERAGE_PCT  = 0.50   # % of the current LP paid from the win pool after every win
+DEFAULT_MM_TIERS = [
+    {"start": 1, "end": 3, "pct": 1.0},
+    {"start": 4, "end": 6, "pct": 0.5},
+    {"start": 7, "end": 10, "pct": 0.2},
+]
