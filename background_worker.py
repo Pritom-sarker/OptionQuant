@@ -165,11 +165,13 @@ def _tick_tab1_early() -> None:
     lead_sec` seconds before it closes. If it already matches, that's staged
     into state.tab1_prediction early (tagged "provisional") so Tab 3 can act
     on it immediately instead of waiting for the close plus the normal
-    detection cycle. Always runs after _tick_tab1() in the same tab1_loop
-    iteration, so its write is what persists into the next iteration — a
-    genuine real closed-candle result (written by _tick_tab1) is never
-    stomped by a stale provisional one for a *different*, already-passed
-    window; see the "not within lead window" branch below.
+    detection cycle. Runs on its own dedicated loop (tab1_early_loop, much
+    tighter cadence than tab1_loop — see TAB1_EARLY_POLL_INTERVAL_SEC) since
+    it only needs the already-cached state.tab1_df, not a full _tick_tab1()
+    re-run. A genuine real closed-candle result (written by _tick_tab1, on
+    its own separate loop) is never stomped by a stale provisional one for a
+    *different*, already-passed window; see the "not within lead window"
+    branch below.
     """
     settings = state.tab1_settings
     if not settings.get("early_entry_enabled"):
@@ -220,11 +222,24 @@ def tab1_loop() -> None:
             _tick_tab1()
         except Exception:
             log.exception("tab1_loop tick failed")
+        time.sleep(config.TAB1_POLL_INTERVAL_SEC)
+
+
+def tab1_early_loop() -> None:
+    """
+    Early Entry gets its own dedicated, much tighter polling loop instead of
+    riding along on tab1_loop's heavier cadence — see config.
+    TAB1_EARLY_POLL_INTERVAL_SEC's docstring for why. Safe to run
+    concurrently with tab1_loop: _tick_tab1_early() only ever reads
+    state.tab1_df (written by _tick_tab1()) and writes state.tab1_prediction
+    / state.tab1_early_prediction, all under state.lock.
+    """
+    while True:
         try:
             _tick_tab1_early()
         except Exception:
-            log.exception("tab1_loop early-entry tick failed")
-        time.sleep(config.TAB1_POLL_INTERVAL_SEC)
+            log.exception("tab1_early_loop tick failed")
+        time.sleep(config.TAB1_EARLY_POLL_INTERVAL_SEC)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -564,5 +579,6 @@ def tab3_loop() -> None:
 
 def start_background_threads() -> None:
     threading.Thread(target=tab1_loop, daemon=True, name="tab1_loop").start()
+    threading.Thread(target=tab1_early_loop, daemon=True, name="tab1_early_loop").start()
     threading.Thread(target=tab2_loop, daemon=True, name="tab2_loop").start()
     threading.Thread(target=tab3_loop, daemon=True, name="tab3_loop").start()

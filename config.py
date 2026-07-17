@@ -103,6 +103,20 @@ TAB1_POLL_INTERVAL_SEC = 2
 # Immediate-Entry-latency reason as TAB1_POLL_INTERVAL_SEC above.
 TAB3_IDLE_POLL_INTERVAL_SEC = 2
 
+# Early Entry (see DEFAULT_TAB1_EARLY_ENTRY_* below) runs in its own
+# dedicated loop at this much tighter cadence, decoupled from
+# TAB1_POLL_INTERVAL_SEC — it only needs one cheap forming-candle fetch +
+# a pattern check against the already-cached closed-candle dataframe, not
+# the full _tick_tab1() pipeline, so polling it this often is cheap. It's
+# only ever active during the last early_entry_lead_sec seconds before a
+# candle closes, so this is the number of real chances to catch a pattern
+# the moment it becomes confirmable — at 2s shared with the full tick, a
+# pattern that only stabilizes in the final second or two of the candle
+# (common for reversal patterns, which depend on the exact final body)
+# could get essentially zero chances to be caught early; at 1s it gets up
+# to early_entry_lead_sec chances instead.
+TAB1_EARLY_POLL_INTERVAL_SEC = 1
+
 # ─── Historical backfill scan (runs once on app startup, not every refresh) ─
 BACKFILL_CANDLES_TARGET = 1000
 
