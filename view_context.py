@@ -609,6 +609,32 @@ def build_skipped_detail_context(candidate_id: int) -> dict:
     }
 
 
+def build_engine_health_context() -> dict:
+    """
+    Settings page footer — raw scheduling health for each background loop
+    (see background_worker._record_tick). gap_sec is wall-clock time between
+    consecutive tick STARTS, so a gap much bigger than the loop's configured
+    interval means the loop is falling behind real-time schedule (CPU/GIL
+    contention across threads, slow network calls, etc.) — not that any
+    single tick's own logic is slow. Exists to diagnose scheduling lag on
+    the actual running server, which a local dev-machine test can't
+    reproduce (no contention there).
+    """
+    now = time.time()
+    with state.lock:
+        health = {k: dict(v) for k, v in state.engine_health.items()}
+    rows = []
+    for name, h in sorted(health.items()):
+        gap = h["gap_sec"]
+        behind = gap is not None and gap > h["interval"] * 1.5
+        rows.append({
+            "name": name, "seconds_ago": now - h["last_tick_start"],
+            "tick_duration": h["tick_duration"], "gap_sec": gap, "interval": h["interval"],
+            "behind": behind,
+        })
+    return {"rows": rows}
+
+
 def build_trade_detail_context(trade_id: int) -> dict:
     """The full per-trade report page — what the Tab 5 table's Details link opens."""
     row = trade_db.fetch_trade(trade_id)

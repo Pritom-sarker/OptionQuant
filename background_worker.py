@@ -26,6 +26,28 @@ from engine_state import state
 
 log = logging.getLogger("background_worker")
 
+_last_tick_start: dict = {}   # loop name -> start ts of its previous tick, module-local (no lock needed, one writer per key)
+
+
+def _record_tick(name: str, tick_start: float, tick_duration: float, interval: float) -> None:
+    """
+    Engine Health bookkeeping — see engine_state.AppState.engine_health's
+    docstring. gap_sec is measured from the previous tick's START to this
+    tick's START (not end-to-end), so it directly reflects real scheduling
+    cadence regardless of how long any individual tick took.
+    """
+    prev_start = _last_tick_start.get(name)
+    gap_sec = (tick_start - prev_start) if prev_start is not None else None
+    _last_tick_start[name] = tick_start
+    with state.lock:
+        state.engine_health[name] = {
+            "last_tick_start": tick_start, "tick_duration": tick_duration,
+            "gap_sec": gap_sec, "interval": interval,
+        }
+    if gap_sec is not None and gap_sec > interval * 3:
+        log.warning("[EngineHealth] %s fell behind schedule: gap=%.1fs (interval=%.1fs, last tick took %.2fs)",
+                    name, gap_sec, interval, tick_duration)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tab 1 — BTC/USD candle signal. Ported from app.py's _render_tab1 /
@@ -218,10 +240,12 @@ def _tick_tab1_early() -> None:
 
 def tab1_loop() -> None:
     while True:
+        t0 = time.time()
         try:
             _tick_tab1()
         except Exception:
             log.exception("tab1_loop tick failed")
+        _record_tick("tab1", t0, time.time() - t0, config.TAB1_POLL_INTERVAL_SEC)
         time.sleep(config.TAB1_POLL_INTERVAL_SEC)
 
 
@@ -235,10 +259,12 @@ def tab1_early_loop() -> None:
     / state.tab1_early_prediction, all under state.lock.
     """
     while True:
+        t0 = time.time()
         try:
             _tick_tab1_early()
         except Exception:
             log.exception("tab1_early_loop tick failed")
+        _record_tick("tab1_early", t0, time.time() - t0, config.TAB1_EARLY_POLL_INTERVAL_SEC)
         time.sleep(config.TAB1_EARLY_POLL_INTERVAL_SEC)
 
 
@@ -279,10 +305,12 @@ def _tick_tab2() -> None:
 
 def tab2_loop() -> None:
     while True:
+        t0 = time.time()
         try:
             _tick_tab2()
         except Exception:
             log.exception("tab2_loop tick failed")
+        _record_tick("tab2", t0, time.time() - t0, 60)
         time.sleep(60)
 
 
@@ -564,6 +592,7 @@ def _wants_fast_poll(slots: list, settings: dict) -> bool:
 
 def tab3_loop() -> None:
     while True:
+        t0 = time.time()
         try:
             _tick_tab3()
         except Exception:
@@ -574,7 +603,9 @@ def tab3_loop() -> None:
             active = bool(slots)
             fast = _wants_fast_poll(slots, settings) if active else False
             interval = settings["fast_poll_interval_sec"] if fast else settings["refresh_interval"]
-        time.sleep(interval if active else config.TAB3_IDLE_POLL_INTERVAL_SEC)
+        interval = interval if active else config.TAB3_IDLE_POLL_INTERVAL_SEC
+        _record_tick("tab3", t0, time.time() - t0, interval)
+        time.sleep(interval)
 
 
 def start_background_threads() -> None:

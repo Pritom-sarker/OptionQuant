@@ -71,6 +71,15 @@ class AppState:
         self.tab1_df = None            # last computed candle DataFrame (for the candle chart route)
         self.tab1_computed: Optional[dict] = None   # pat_dir/filters/act_ok/results/stats bundle
 
+        # Engine Health — one entry per background loop (see background_worker.
+        # _record_tick), for diagnosing scheduling lag under real server load
+        # (CPU contention, GIL pressure across threads) that unit-level testing
+        # on a dev machine can't reproduce. gap_sec is wall-clock time since
+        # the PREVIOUS tick's start — should track the loop's configured
+        # interval; a gap much bigger than that means the loop is falling
+        # behind schedule, not that any single tick's own logic is slow.
+        self.engine_health: dict = {}
+
         # Tab 2 — Polymarket order book observer
         self.tab2_observer = None      # candidate_manager.ObservationState
         self.tab2_market: Optional[dict] = None

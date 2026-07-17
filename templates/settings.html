@@ -105,4 +105,29 @@
     <button type="submit" class="btn-danger">Reset Database</button>
   </form>
 </div>
+
+<h2 class="section">Engine Health</h2>
+<p class="caption">Real scheduling cadence of each background loop on THIS running server — "Gap" is wall-clock time
+  between consecutive ticks starting; it should track "Interval" closely. A gap much bigger than the interval means
+  the loop is falling behind real-time schedule (server CPU/thread contention, slow network calls), not that any one
+  tick's own logic is slow — this page doesn't auto-refresh, reload to get fresh numbers.</p>
+<div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th>Loop</th><th>Last Tick</th><th>Tick Duration</th><th>Gap (actual)</th><th>Interval (target)</th><th>Status</th></tr></thead>
+  <tbody>
+    {% for r in engine_health.rows %}
+    <tr>
+      <td>{{ r.name }}</td>
+      <td>{{ "%.1fs ago"|format(r.seconds_ago) }}</td>
+      <td>{{ "%.2fs"|format(r.tick_duration) }}</td>
+      <td>{{ "%.1fs"|format(r.gap_sec) if r.gap_sec is not none else "—" }}</td>
+      <td>{{ "%.1fs"|format(r.interval) }}</td>
+      <td><span class="badge {{ 'red' if r.behind else 'green' }}">{{ "FALLING BEHIND" if r.behind else "on schedule" }}</span></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" style="color: var(--text-faint);">No ticks recorded yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
 {% endblock %}

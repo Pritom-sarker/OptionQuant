@@ -124,7 +124,8 @@ def settings_page(request: Request, saved: bool = False, reset: bool = False,
         tab3 = dict(state.tab3_settings)
     ctx = {"request": request, "active_tab": "settings", "tab1": tab1, "tab3": tab3,
            "pattern_options": config.PATTERN_OPTIONS, "pattern_slugs": config.PATTERN_SLUGS,
-           "saved": saved, "reset": reset, "imported": imported, "import_error": import_error}
+           "saved": saved, "reset": reset, "imported": imported, "import_error": import_error,
+           "engine_health": vc.build_engine_health_context()}
     return templates.TemplateResponse(request, "settings.html", ctx)
 
 
