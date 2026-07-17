@@ -175,6 +175,7 @@ def settings_tab3(
     depth_stable_tolerance: float = Form(...), immediate_mode: bool = Form(False),
     immediate_entry_window_sec: int = Form(...),
     entry_deadline_sec: int = Form(...),
+    fast_poll_lead_sec: int = Form(...), fast_poll_interval_sec: float = Form(...),
 ):
     with state.lock:
         state.tab3_settings = {
@@ -187,6 +188,7 @@ def settings_tab3(
             "depth_stable_tolerance": depth_stable_tolerance, "immediate_mode": immediate_mode,
             "immediate_entry_window_sec": immediate_entry_window_sec,
             "entry_deadline_sec": entry_deadline_sec,
+            "fast_poll_lead_sec": fast_poll_lead_sec, "fast_poll_interval_sec": fast_poll_interval_sec,
         }
     save_settings()
     return RedirectResponse(url="/settings?saved=1", status_code=303)

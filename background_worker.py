@@ -524,6 +524,29 @@ def _tick_tab3() -> None:
             state.tab3_last_chart_refresh = now
 
 
+def _wants_fast_poll(slots: list, settings: dict) -> bool:
+    """
+    True while any candidate is still OBSERVING (no trade placed yet) and
+    within fast_poll_lead_sec of its candle's actual open, on either side —
+    the "catch the exact right price" window worth polling close to every
+    second for instead of the normal refresh_interval. The trailing edge is
+    bounded by whatever actually determines the entry cutoff for the current
+    global mode (immediate_entry_window_sec in Immediate Entry, else the
+    general entry_deadline_sec) — no point polling fast once entry is
+    structurally impossible for the rest of the candidate's life.
+    """
+    now = time.time()
+    lead = settings["fast_poll_lead_sec"]
+    trail = settings["immediate_entry_window_sec"] if settings.get("immediate_mode") else settings["entry_deadline_sec"]
+    for slot in slots:
+        if slot["trade"] is not None:
+            continue   # already entered — outcome monitoring only, no need to rush
+        seconds_from_open = now - slot["candidate"].signal_time
+        if -lead <= seconds_from_open <= trail:
+            return True
+    return False
+
+
 def tab3_loop() -> None:
     while True:
         try:
@@ -531,8 +554,11 @@ def tab3_loop() -> None:
         except Exception:
             log.exception("tab3_loop tick failed")
         with state.lock:
-            active = bool(state.tab3_slots)
-            interval = state.tab3_settings["refresh_interval"]
+            slots = state.tab3_slots
+            settings = state.tab3_settings
+            active = bool(slots)
+            fast = _wants_fast_poll(slots, settings) if active else False
+            interval = settings["fast_poll_interval_sec"] if fast else settings["refresh_interval"]
         time.sleep(interval if active else config.TAB3_IDLE_POLL_INTERVAL_SEC)
 
 

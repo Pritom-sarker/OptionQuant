@@ -141,6 +141,17 @@ DEFAULT_TAB3_REFRESH_INTERVAL_SEC      = 3      # engine tick — fast, drives T
 DEFAULT_TAB3_CHART_REFRESH_SEC         = 30     # chart images only regenerate this often — values are always live
 DEFAULT_TAB3_OBSERVATION_BURST_SEC     = 20     # Candidate Observation Time (initial burst, ~10 snapshots)
 
+# tab3_loop() switches to this much tighter tick cadence whenever any
+# candidate is still OBSERVING (no trade placed yet) and within
+# fast_poll_lead_sec of its candle's actual open (before or after) — this is
+# the "catch the exact right price" window, so it's worth polling the order
+# book close to every second instead of the normal refresh_interval. Once a
+# trade is placed (or the candidate falls outside that window entirely —
+# e.g. dropped as SKIPPED_LATE), the loop falls back to refresh_interval for
+# ordinary trade-outcome monitoring. Both configurable on Settings (Tab 3).
+DEFAULT_TAB3_FAST_POLL_LEAD_SEC     = 15    # start fast-polling this many seconds before candle open
+DEFAULT_TAB3_FAST_POLL_INTERVAL_SEC = 1.0   # tick cadence while fast-polling
+
 DEFAULT_TAB3_MAX_ENTRY_PRICE        = 0.50    # soft cap used by the entry-mode logic
 DEFAULT_TAB3_HARD_BLOCK_PRICE       = 0.55    # hard rule — never enter above this, no exceptions
 DEFAULT_TAB3_MIN_PROFIT_FACTOR      = 0.90

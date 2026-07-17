@@ -94,6 +94,8 @@ class AppState:
             "immediate_mode": config.DEFAULT_TAB3_IMMEDIATE_MODE,
             "immediate_entry_window_sec": config.DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC,
             "entry_deadline_sec": config.DEFAULT_TAB3_ENTRY_DEADLINE_SEC,
+            "fast_poll_lead_sec": config.DEFAULT_TAB3_FAST_POLL_LEAD_SEC,
+            "fast_poll_interval_sec": config.DEFAULT_TAB3_FAST_POLL_INTERVAL_SEC,
         }
         # Each slot is {"candidate": TradeCandidate, "trade": Optional[ActiveTrade]} —
         # multiple can be active at once (one per candle/contract; a new candle's

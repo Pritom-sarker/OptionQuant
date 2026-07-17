@@ -75,6 +75,10 @@
   <div class="field"><label>Immediate Entry Window (± sec around candle open)</label><input type="number" name="immediate_entry_window_sec" value="{{ tab3.immediate_entry_window_sec }}" min="1" max="120"></div>
   <div class="caption" style="grid-column: 1 / -1;">Immediate Entry only buys from this many seconds before the candle opens to this many seconds after — outside that window it holds off even if the profit factor floor is met (the candidate keeps observing until Entry Deadline above eventually skips it).</div>
 
+  <div class="field"><label>Fast-Poll Lead Time (sec before candle open)</label><input type="number" name="fast_poll_lead_sec" value="{{ tab3.fast_poll_lead_sec }}" min="0" max="60"></div>
+  <div class="field"><label>Fast-Poll Tick Interval (sec)</label><input type="number" step="0.5" name="fast_poll_interval_sec" value="{{ tab3.fast_poll_interval_sec }}" min="0.5" max="10"></div>
+  <div class="caption" style="grid-column: 1 / -1;">While any candidate is still observing (no order placed yet) and within Fast-Poll Lead Time of its candle's open — on either side, up to whichever entry cutoff currently applies (Immediate Entry Window, or Entry Deadline otherwise) — the whole engine ticks at Fast-Poll Tick Interval instead of Refresh Interval, to catch the exact right price. Falls back to Refresh Interval as soon as an order is placed or that window closes.</div>
+
   <div class="form-actions"><button type="submit">Apply Live Trades Settings</button></div>
 </form>
 
