@@ -17,6 +17,7 @@ from matplotlib.patches import Rectangle
 import plotly.graph_objects as go
 
 import config
+import orderbook_engine as obe
 
 GREEN = "#00aa44"
 RED = "#dd2222"
@@ -484,6 +485,52 @@ def build_tab3_live_price_chart(candidate_snapshots: list[dict], trade_snapshots
     ax.grid(True, color="#dddddd", linewidth=0.6)
     ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
     fig.autofmt_xdate()
+    fig.tight_layout()
+    return fig
+
+
+def build_candidate_scan_chart(snapshots: list[dict], signal_time: float) -> plt.Figure:
+    """
+    Debug chart for a single candidate's full pre-entry scan history (every
+    order-book snapshot taken while it was OBSERVING, saved to trade_db
+    regardless of whether it ever got entered — see trade_db.
+    insert_candidate_snapshot, called on every tick by
+    trade_engine.record_candidate_snapshot). X-axis is seconds relative to
+    signal_time (0 = the candle's actual open) rather than wall-clock time,
+    so it's immediately obvious how early/late each scan was and whether the
+    entry window was actually wide enough to catch a good price. Price on
+    the left axis, profit factor on the right; BUY-decision points marked.
+    """
+    if not snapshots:
+        return _empty_tab3_figure("Scan History — Price & Profit Factor", figsize=(12, 4.5))
+
+    seconds_from_open = [s["ts"] - signal_time for s in snapshots]
+    prices = [s["selected_price"] for s in snapshots]
+    pfs = [obe.profit_factor(p) for p in prices]
+
+    fig, ax1 = plt.subplots(figsize=(12, 4.5), dpi=100)
+    fig.patch.set_facecolor("white")
+    ax1.set_facecolor("white")
+
+    ax1.plot(seconds_from_open, prices, color="#607d8b", linewidth=1.8, marker="o", markersize=3, label="Price")
+    buy_x = [x for x, s in zip(seconds_from_open, snapshots) if s["decision"] == "BUY"]
+    buy_y = [p for p, s in zip(prices, snapshots) if s["decision"] == "BUY"]
+    if buy_x:
+        ax1.scatter(buy_x, buy_y, color=GREEN, s=70, zorder=5, marker="*", label="BUY")
+    ax1.axvline(0, color="#888888", linestyle="--", linewidth=1.2, label="Candle open")
+    ax1.set_ylim(0, 1)
+    ax1.set_ylabel("Contract price", color="#607d8b")
+    ax1.set_xlabel("Seconds relative to candle open")
+    ax1.grid(True, color="#dddddd", linewidth=0.6)
+
+    ax2 = ax1.twinx()
+    ax2.plot(seconds_from_open, pfs, color="#8a2be2", linewidth=1.4, linestyle=":", label="Profit Factor")
+    ax2.set_ylabel("Profit factor", color="#8a2be2")
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=8, framealpha=0.9)
+    ax1.set_title("Scan History — Price & Profit Factor vs. Candle Open", fontsize=13, fontweight="bold")
     fig.tight_layout()
     return fig
 

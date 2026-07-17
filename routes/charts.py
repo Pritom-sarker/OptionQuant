@@ -14,6 +14,7 @@ from fastapi.responses import Response, FileResponse
 
 import config
 import chart_builder as chartb
+import trade_db
 import view_context as vc
 from engine_state import state
 
@@ -110,6 +111,22 @@ def tab3_saved_file(path: str = Query(...)):
     if not real_path.startswith(chart_dir + os.sep) or not os.path.exists(real_path):
         raise HTTPException(404, "chart not found")
     return FileResponse(real_path, media_type="image/png")
+
+
+@router.get("/tab5/scan.png")
+def candidate_scan(candidate_id: int = Query(...)):
+    """
+    Every scan a candidate ever took (from trade_db, not live memory) —
+    works for entered trades AND skipped-late/expired candidates alike,
+    since insert_candidate_snapshot saves one row per tick regardless of
+    outcome. See build_candidate_scan_chart's docstring.
+    """
+    candidate = trade_db.fetch_candidate(candidate_id)
+    if candidate is None:
+        return Response(content=_placeholder(), media_type="image/png")
+    snapshots = trade_db.fetch_candidate_snapshots(candidate_id)
+    fig = chartb.build_candidate_scan_chart(snapshots, candidate["signal_time"])
+    return _matplotlib_png(fig)
 
 
 @router.get("/tab6/balance.png")

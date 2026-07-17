@@ -44,7 +44,7 @@ PATTERN_SLUGS = {"ATR Reversal": "atr_reversal", "Engulfing": "engulfing",
 DEFAULT_ENABLED_PATTERNS = ["ATR Reversal", "Exhaustion"]   # enabled by default; the rest start off
 
 DEFAULT_ATR_LENGTH     = 14
-DEFAULT_ATR_MULTIPLIER = 1.0
+DEFAULT_ATR_MULTIPLIER = 0.2
 DEFAULT_ATR_SMA_LENGTH = 50
 
 DEFAULT_F1_TREND        = False  # EMA20 > EMA50 alignment
@@ -162,30 +162,28 @@ DEFAULT_TAB3_MIN_LIQUIDITY_USD      = 25.0
 DEFAULT_TAB3_PRESSURE_THRESHOLD     = 0.15    # Mode 1 "pressure >= threshold"
 DEFAULT_TAB3_DEPTH_STABLE_TOLERANCE = 0.10    # Mode 1 "ask depth stable" — max fractional change allowed
 
-# When ON: skip every order-book condition (pressure/profit-factor/spread/
-# liquidity) and enter immediately at whatever price is available the moment
-# a candidate is created; skip early exit entirely (only settle_at_expiry
-# ever closes the trade). Simpler alternative to the order-book-based entry
-# modes above — everything else (stake, settlement, PnL, charts) is unchanged.
-# OFF by default: the order-book-confirmed modes (immediate-on-strong-
-# pressure, or wait-for-a-dip-then-recover) are the default strategy now —
-# see _decide_entry in trade_engine.py.
-DEFAULT_TAB3_IMMEDIATE_MODE = False
+# When ON: skip every order-book condition (pressure/spread/liquidity —
+# Minimum Profit Factor and the Immediate Entry Window still apply, see
+# _decide_entry in trade_engine.py) and enter as soon as both clear, instead
+# of waiting on pressure/slope confirmation; skip early exit entirely (only
+# settle_at_expiry ever closes the trade). ON by default — this is the
+# live strategy currently in use.
+DEFAULT_TAB3_IMMEDIATE_MODE = True
 
 # Immediate Entry only fires within this many seconds of the candle's actual
 # open (candidate.signal_time) — from signal_time - window to signal_time +
 # window. Outside that window it holds off (WAIT) even if the profit factor
 # floor is met; still bounded overall by entry_deadline_sec above, which
 # eventually drops the candidate as SKIPPED_LATE if it never lines up.
-# 60s, not 10s: candidate creation alone (signal detection -> market lookup
-# -> first order-book fetch) routinely eats 5-10s before the first price
-# check even happens, and this window never re-opens once it closes (time
-# only moves forward) — a 10s window left most candidates with only a
-# second or two of real opportunity to also clear the profit-factor floor,
-# which is what caused a run of back-to-back SKIPPED_LATE candidates with a
-# perfectly good, high-PF price sitting just outside the window. Still
-# configurable on Settings (Tab 3) if you want it tighter or looser.
-DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC = 60
+# 25s: deliberately tight — if it can't get filled within the first ~25s of
+# the candle actually opening, the price has moved too far from "the open"
+# to be worth chasing; better to skip the trade than buy deep and late. This
+# only works because Early Entry (Tab 1) + the fast-poll tick (see
+# fast_poll_lead_sec below) already have the candidate created and actively
+# checking price ~15s BEFORE the candle even opens — most of the old
+# candidate-creation latency that justified a wider window is absorbed
+# before signal_time is even reached. Configurable on Settings (Tab 3).
+DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC = 25
 
 # Backstop for signals that still land late despite Early Entry (see Tab 1's
 # early-entry settings above): once a candidate's predicted window has
@@ -216,9 +214,9 @@ TAB3_SNAPSHOT_HISTORY_MAX = 2000   # bounded in-memory rolling history per candi
 # upcoming trade's own price is unknowable in advance — see
 # money_management.py's module docstring.
 DEFAULT_MM_STARTING_BALANCE        = 1000.0   # display only — does not affect sizing
-DEFAULT_MM_BASE_STAKE              = 1.0      # order 1 of every new cycle
+DEFAULT_MM_BASE_STAKE              = 1.01     # order 1 of every new cycle
 DEFAULT_MM_STATIC_LP_PCT           = 0.20     # % of the permanent pool added to order 1 only
-DEFAULT_MM_MAX_FIRST_ORDER_STAKE   = 3.0      # caps order 1's base + LP add-on combined
+DEFAULT_MM_MAX_FIRST_ORDER_STAKE   = 3.01     # caps order 1's base + LP add-on combined
 DEFAULT_MM_MAXIMUM_CYCLE_ORDERS    = 10
 DEFAULT_MM_FALLBACK_MODE           = "stop"   # "stop" | "continue" | "manual"
 DEFAULT_MM_CYCLE_TIMEOUT_LP_PCT    = 0.20     # % of a maxed-out cycle's loss sent to the LP; rest written off

@@ -36,5 +36,31 @@
   <strong>{{ "%.0f"|format(seconds_late) if seconds_late is not none else "—" }} seconds</strong> later —
   past the {{ entry_deadline_sec }}s entry deadline, so the signal was skipped instead of being entered at a stale price.</p>
 <p><strong>No stake was risked, no PnL — this trade never happened.</strong></p>
+
+<h2 class="section">Scan History</h2>
+<p class="caption">Every order-book snapshot taken while this candidate was being watched, saved regardless of the
+  outcome — this is the raw evidence of why it never got bought: what the price and profit factor actually were,
+  scan by scan, relative to the candle's real open (0s).</p>
+<img src="/charts/tab5/scan.png?candidate_id={{ row.id }}" alt="Scan history — price and profit factor" style="max-width: 100%;">
+<div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th>Time</th><th>Sec From Open</th><th>Price</th><th>Profit Factor</th><th>Decision</th><th>Mode</th><th>Reason</th></tr></thead>
+  <tbody>
+    {% for s in scan_rows %}
+    <tr>
+      <td>{{ s.time_str }}</td>
+      <td>{{ "%+.1f"|format(s.seconds_from_open) }}</td>
+      <td>{{ s.price if s.price is not none else "—" }}</td>
+      <td>{{ s.pf if s.pf is not none else "—" }}</td>
+      <td><span class="badge {{ 'green' if s.decision=='BUY' else 'neutral' }}">{{ s.decision }}</span></td>
+      <td>{{ s.mode or "—" }}</td>
+      <td style="min-width: 320px; white-space: normal;">{{ s.reason }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" style="color: var(--text-faint);">No scans recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
 {% endif %}
 {% endblock %}

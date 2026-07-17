@@ -396,6 +396,8 @@ def build_trade_report(row: dict) -> dict:
         })
 
     duration = (row["exit_time"] - row["entry_time"]) if row["exit_time"] and row["entry_time"] else None
+    scan_rows = (list(reversed(_candidate_scan_rows(cand_snaps, candidate_row["signal_time"])))
+                 if candidate_row else [])
 
     return {
         "row": row, "candidate": candidate_row,
@@ -406,6 +408,7 @@ def build_trade_report(row: dict) -> dict:
         "snapshots_before_entry": len(cand_snaps),
         "entry_snap": cand_snaps[-1] if cand_snaps else None,
         "danger_rows": danger_rows,
+        "scan_rows": scan_rows,
         "exit_type": "Early Exit" if row["status"] == "EARLY_EXIT" else ("Expiry" if row["exit_reason"] else None),
         "duration": round(duration, 1) if duration is not None else "—",
         "snapshot_count": len(cand_snaps) + len(trade_snaps),
@@ -559,18 +562,41 @@ def build_money_management_context() -> dict:
     }
 
 
+def _candidate_scan_rows(snapshots: list[dict], signal_time: float) -> list[dict]:
+    """
+    One row per order-book snapshot taken while a candidate was OBSERVING —
+    trade_engine.record_candidate_snapshot saves one every tick regardless
+    of the decision, so this exists for every candidate, entered or not
+    (see trade_db.insert_candidate_snapshot). Chronological, oldest first,
+    to match the debug chart (build_candidate_scan_chart) it's paired with.
+    """
+    rows = []
+    for s in snapshots:
+        price = s["selected_price"]
+        rows.append({
+            "time_str": time.strftime("%H:%M:%S", time.localtime(s["ts"])),
+            "seconds_from_open": s["ts"] - signal_time,
+            "price": round(price, 3) if price is not None else None,
+            "pf": round(obe.profit_factor(price), 3) if price else None,
+            "decision": s["decision"], "mode": s["mode"], "reason": s["reason"],
+        })
+    return rows
+
+
 def build_skipped_detail_context(candidate_id: int) -> dict:
     """
     The skipped-late candidate detail page — what a Tab 5 "SKIPPED" row's
     Details link opens. Distinct from build_trade_detail_context: a skipped
-    candidate never became a trade (no entry, no order-book snapshots to
-    report), just the signal that fired, the Polymarket contract it tried,
-    and how late it was caught.
+    candidate never became a trade (no entry), just the signal that fired,
+    the Polymarket contract it tried, how late it was caught, and its full
+    pre-entry scan history (every order-book snapshot IS saved regardless of
+    outcome — see _candidate_scan_rows).
     """
     row = trade_db.fetch_candidate(candidate_id)
     if row is None or row["status"] != "SKIPPED_LATE":
         return {"found": False}
     created_lag = (row["created_at"] - row["signal_time"]) if row["created_at"] else None
+    snapshots = trade_db.fetch_candidate_snapshots(candidate_id)
     return {
         "found": True, "row": row,
         "signal_time_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["signal_time"])),
@@ -579,6 +605,7 @@ def build_skipped_detail_context(candidate_id: int) -> dict:
         "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{row['market_slug']}",
         "seconds_late": row["skip_seconds_late"],
         "entry_deadline_sec": state.tab3_settings["entry_deadline_sec"],
+        "scan_rows": list(reversed(_candidate_scan_rows(snapshots, row["signal_time"]))),
     }
 
 
