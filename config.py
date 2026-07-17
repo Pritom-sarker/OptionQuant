@@ -166,8 +166,15 @@ DEFAULT_TAB3_IMMEDIATE_MODE = False
 # window. Outside that window it holds off (WAIT) even if the profit factor
 # floor is met; still bounded overall by entry_deadline_sec above, which
 # eventually drops the candidate as SKIPPED_LATE if it never lines up.
-# Configurable on Settings (Tab 3).
-DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC = 10
+# 60s, not 10s: candidate creation alone (signal detection -> market lookup
+# -> first order-book fetch) routinely eats 5-10s before the first price
+# check even happens, and this window never re-opens once it closes (time
+# only moves forward) — a 10s window left most candidates with only a
+# second or two of real opportunity to also clear the profit-factor floor,
+# which is what caused a run of back-to-back SKIPPED_LATE candidates with a
+# perfectly good, high-PF price sitting just outside the window. Still
+# configurable on Settings (Tab 3) if you want it tighter or looser.
+DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC = 60
 
 # Backstop for signals that still land late despite Early Entry (see Tab 1's
 # early-entry settings above): once a candidate's predicted window has
