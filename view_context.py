@@ -332,6 +332,35 @@ def _build_trade_detail_item(candidate, trade) -> dict:
     }
 
 
+def _loss_streaks(trades_newest_first: list[dict]) -> dict:
+    """
+    trades_newest_first: trade_db.fetch_all_trades()'s own ordering (id DESC).
+    current_losing_streak: consecutive LOSSes counting back from the most
+    recent settled trade — 0 if the most recent trade was a WIN. Stops at
+    the first WIN, ignoring any non-WIN/LOSS row (shouldn't happen for
+    closed trades, but real data has surprised this codebase before).
+    longest_losing_streak: the longest such run anywhere in the history,
+    walked oldest -> newest.
+    """
+    current = 0
+    for t in trades_newest_first:
+        if t["final_result"] == "LOSS":
+            current += 1
+        elif t["final_result"] == "WIN":
+            break
+        # anything else (shouldn't occur here): skip without breaking the streak
+
+    longest = running = 0
+    for t in reversed(trades_newest_first):   # oldest -> newest
+        if t["final_result"] == "LOSS":
+            running += 1
+            longest = max(longest, running)
+        elif t["final_result"] == "WIN":
+            running = 0
+
+    return {"current_losing_streak": current, "longest_losing_streak": longest}
+
+
 def _closed_trades_summary(trades: list[dict]) -> dict:
     wins = [t for t in trades if t["final_result"] == "WIN"]
     losses = [t for t in trades if t["final_result"] == "LOSS"]
@@ -347,6 +376,7 @@ def _closed_trades_summary(trades: list[dict]) -> dict:
         "best": max(profits) if profits else None, "worst": min(profits) if profits else None,
         "avg_entry": (sum(entry_prices) / len(entry_prices)) if entry_prices else None,
         "avg_pf": (sum(pfs) / len(pfs)) if pfs else None,
+        **_loss_streaks(trades),
     }
 
 
@@ -428,6 +458,50 @@ def build_tab5_context() -> dict:
     return {"has_trades": True, "stats": stats, "rows": rows}
 
 
+def _mm_order_note(row: dict) -> str:
+    """
+    One-line plain-English explanation of why a given tiered-money-management
+    order was sized the way it was and what it did to the cycle/pool state —
+    the "is this bot actually following the rules" audit trail for Tab 6's
+    Money Trail section. Built purely from replay_tiered()'s per-row fields,
+    never re-derives numbers.
+    """
+    if row["result"] == "CYCLE_TIMEOUT":
+        return (f"Order {row['order_number_in_cycle']} of cycle #{row['cycle_id']} would exceed the maximum "
+                f"cycle length — ${row['transferred_to_pool']:.2f} of the ${row['temporary_loss_before']:.2f} "
+                f"unresolved loss moved to the permanent pool, the rest written off. Fresh cycle starts.")
+
+    if row["order_number_in_cycle"] == 1:
+        if row["pool_recovery_stake"] > 0.005:
+            note = (f"Order 1 of a new cycle — ${row['base_or_cycle_stake']:.2f} base stake + "
+                     f"${row['pool_recovery_stake']:.2f} pulled from the ${row['permanent_pool_before']:.2f} "
+                     f"permanent pool = ${row['final_stake']:.2f} staked.")
+        else:
+            note = f"Order 1 of a new cycle — ${row['final_stake']:.2f} base stake, permanent pool is currently clear."
+    else:
+        note = (f"Order {row['order_number_in_cycle']} of cycle #{row['cycle_id']} — chasing "
+                 f"{row['recovery_percentage'] * 100:.0f}% of the ${row['temporary_loss_before']:.2f} lost so far "
+                 f"({row['recovery_tier']}) = ${row['final_stake']:.2f} staked.")
+
+    if row["result"] == "LOSS":
+        note += (f" Lost — cycle's temporary loss is now ${row['temporary_loss_after']:.2f} "
+                  f"({row['order_number_in_cycle']} loss{'es' if row['order_number_in_cycle'] > 1 else ''} deep).")
+    else:   # WIN
+        if row["transferred_to_pool"] > 0.005:
+            note += (f" Won ${row['actual_payout']:.2f} — recovered ${row['recovered_from_cycle']:.2f} of the loss "
+                      f"but ${row['transferred_to_pool']:.2f} was short and moved to the permanent pool (now "
+                      f"${row['permanent_pool_after']:.2f}). Cycle closed, fresh cycle starts.")
+        else:
+            note += (f" Won ${row['actual_payout']:.2f} — fully recovered the ${row['temporary_loss_before']:.2f} "
+                      f"loss. Cycle closed clean.")
+        if row["win_pool_contribution"] > 0.005:
+            note += f" ${row['win_pool_contribution']:.2f} set aside to the win pool."
+        if row["win_pool_lp_payment"] > 0.005:
+            note += f" ${row['win_pool_lp_payment']:.2f} paid from the win pool toward the permanent pool."
+
+    return note
+
+
 def build_money_management_context() -> dict:
     """
     Tab 6 — replays trade_db's real settled trades (oldest -> newest) through
@@ -442,7 +516,7 @@ def build_money_management_context() -> dict:
     tiers = [dict(t) for t in state.mm_tiers]
     tier_errors = mm.validate_tiers(tiers, settings["maximum_cycle_orders"])
 
-    db_rows = trade_db.fetch_all_trades()
+    db_rows = trade_db.fetch_all_trades_with_signal_time()
     if not db_rows:
         return {"has_trades": False, "settings": settings, "tiers": tiers, "tier_errors": tier_errors}
 
@@ -461,9 +535,25 @@ def build_money_management_context() -> dict:
     }
     for row in trade_log:
         row["time_str"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["time"]))
+        row["signal_time_str"] = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["signal_time"]))
+                                   if row.get("signal_time") else "—")
+        row["note"] = _mm_order_note(row)
+
+    if live_status["final_stake"] is None:
+        current_state_note = "HALTED — " + live_status["halt_reason"]
+    elif live_status["cycle_order_number"] == 1:
+        current_state_note = (f"Cycle clear — next order starts fresh at ${live_status['final_stake']:.2f} "
+                               f"(permanent pool ${live_status['permanent_loss_pool']:.2f} still owed, paid down "
+                               f"gradually on top of future order-1 stakes).")
+    else:
+        current_state_note = (f"{live_status['consecutive_losses']} loss(es) deep in cycle #{trade_log[-1]['cycle_id']} "
+                               f"— next order (#{live_status['cycle_order_number']}) chases "
+                               f"${live_status['temporary_cycle_loss']:.2f} of temporary loss at "
+                               f"{live_status['active_recovery_tier']}, staking ${live_status['final_stake']:.2f}.")
+
     return {
         "has_trades": True, "settings": settings, "tiers": tiers, "tier_errors": tier_errors,
-        "summary": summary, "live_status": live_status,
+        "summary": summary, "live_status": live_status, "current_state_note": current_state_note,
         "hourly": hourly, "curves": curves,
         "trade_log": list(reversed(trade_log))[:100],   # newest first for display, capped like Tab 5's recent list
     }

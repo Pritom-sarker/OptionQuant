@@ -96,16 +96,18 @@ def _tier_for_position(position: int, sorted_tiers: list[dict]) -> tuple[Optiona
 
 def trades_from_db_rows(rows: list[dict]) -> list[dict]:
     """
-    Converts trade_db rows (as returned by trade_db.fetch_all_trades(),
-    newest-first) into the chronological (oldest -> newest) {"time","result",
-    "entry_price","direction"} list replay_tiered() expects. The single
-    shared conversion — both Tab 6's display and Tab 3's live sizing (see
-    next_trade_amount_tiered()) call this so they can never drift out of
-    sync with each other.
+    Converts trade_db rows (as returned by trade_db.fetch_all_trades() or
+    fetch_all_trades_with_signal_time(), newest-first) into the chronological
+    (oldest -> newest) {"time","result","entry_price","direction","signal_time"}
+    list replay_tiered() expects. The single shared conversion — both Tab 6's
+    display and Tab 3's live sizing (see next_trade_amount_tiered()) call this
+    so they can never drift out of sync with each other. signal_time is
+    display-only metadata (None if rows came from fetch_all_trades(), which
+    doesn't join it in) — it never affects sizing/recovery math.
     """
     return [
         {"time": r["entry_time"], "result": r["final_result"], "entry_price": r["entry_price"],
-         "direction": "YES" if r["direction"] == 1 else "NO"}
+         "direction": "YES" if r["direction"] == 1 else "NO", "signal_time": r.get("signal_time")}
         for r in reversed(rows)
     ]
 
@@ -188,7 +190,8 @@ def replay_tiered(trades: list[dict], money: dict, tiers: list[dict]) -> dict:
                 consecutive_losses = 0
 
                 trade_rows.append({
-                    "time": t["time"], "cycle_id": cycle_id_used, "order_number_in_cycle": position_used,
+                    "time": t["time"], "signal_time": t.get("signal_time"),
+                    "cycle_id": cycle_id_used, "order_number_in_cycle": position_used,
                     "result": "CYCLE_TIMEOUT", "direction": t.get("direction"),
                     "recovery_tier": "MAX CYCLE ORDERS REACHED", "recovery_percentage": cycle_timeout_lp_pct,
                     "temporary_loss_before": temp_loss_before, "base_or_cycle_stake": 0.0,
@@ -268,7 +271,8 @@ def replay_tiered(trades: list[dict], money: dict, tiers: list[dict]) -> dict:
             consecutive_losses = 0
 
         trade_rows.append({
-            "time": t["time"], "cycle_id": cycle_id_used, "order_number_in_cycle": position_used,
+            "time": t["time"], "signal_time": t.get("signal_time"),
+            "cycle_id": cycle_id_used, "order_number_in_cycle": position_used,
             "result": result, "direction": t.get("direction"),
             "recovery_tier": tier_label, "recovery_percentage": tier_pct,
             "temporary_loss_before": temp_loss_before, "base_or_cycle_stake": base_component,

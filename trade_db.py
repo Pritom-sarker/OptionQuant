@@ -299,6 +299,23 @@ def fetch_all_trades() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def fetch_all_trades_with_signal_time() -> list[dict]:
+    """
+    Same rows as fetch_all_trades(), plus each trade's originating candidate's
+    signal_time (LEFT JOIN — a trade whose candidate row was ever deleted
+    still comes back, just with signal_time=None). Tab 6's money-management
+    ledger needs both "when the signal fired" and "when the order was
+    actually placed" (entry_time) shown as two distinct moments.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT trades.*, candidates.signal_time AS signal_time FROM trades "
+            "LEFT JOIN candidates ON trades.candidate_id = candidates.id "
+            "WHERE trades.status != 'OPEN' ORDER BY trades.id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def fetch_trade(trade_id: int) -> dict | None:
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()

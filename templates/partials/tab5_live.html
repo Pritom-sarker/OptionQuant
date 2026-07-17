@@ -19,6 +19,10 @@
   {{ m.metric("Worst Trade", ("%.4f"|format(stats.worst)) if stats.worst is not none else "—") }}
   {{ m.metric("Avg Entry / Avg PF", ("%.3f / %.2fx"|format(stats.avg_entry, stats.avg_pf)) if stats.avg_entry is not none else "—") }}
 </div>
+<div class="metric-grid">
+  {{ m.metric("Current Losing Streak", stats.current_losing_streak, value_class=("red" if stats.current_losing_streak > 0 else None)) }}
+  {{ m.metric("Longest Losing Streak (all-time)", stats.longest_losing_streak) }}
+</div>
 {% if stats.skipped_late %}
 <p class="caption">"Skipped (Late)" rows below never risked a stake — the window opened but no order was placed before the entry deadline passed, so they're excluded from every stat above.</p>
 {% endif %}

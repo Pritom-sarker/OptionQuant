@@ -43,6 +43,36 @@
   {{ m.metric("Next Stake", ("$%.2f"|format(live_status.final_stake) if live_status.final_stake is not none else "HALTED"), value_class=("red" if live_status.final_stake is none else None)) }}
   {{ m.metric("Consecutive Losses", live_status.consecutive_losses) }}
 </div>
+<div class="callout{{ ' idle' if live_status.cycle_order_number == 1 and not live_status.halted else '' }}"
+     {{ 'style="border-left-color: var(--red);"'|safe if live_status.halted else '' }}>{{ current_state_note }}</div>
+
+<h2 class="section">Money Trail — Order by Order</h2>
+<p class="caption">Every real order, oldest logic first: when the signal fired, when the order was actually placed, what
+  it was made of (base stake vs. money pulled from the permanent pool), where a win's payout went (recovery vs. the
+  win pool), and a plain-English note on why — this is the "is the bot actually following the rules" audit trail.
+  Newest first, same as the trade log below.</p>
+<div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th>Signal Time</th><th>Order Time</th><th>Side</th><th>Cycle / Order #</th><th>Result</th>
+    <th>Base Stake</th><th>From Perm. Pool</th><th>Total Staked</th><th>To Win Pool</th><th>Note</th></tr></thead>
+  <tbody>
+    {% for t in trade_log %}
+    <tr>
+      <td>{{ t.signal_time_str }}</td>
+      <td>{{ t.time_str }}</td>
+      <td>{{ t.direction or "—" }}</td>
+      <td>#{{ t.cycle_id }} / {{ t.order_number_in_cycle }}</td>
+      <td><span class="badge {{ 'green' if t.result=='WIN' else ('red' if t.result=='LOSS' else 'neutral') }}">{{ t.result }}</span></td>
+      <td>${{ "%.2f"|format(t.base_or_cycle_stake) }}</td>
+      <td>${{ "%.2f"|format(t.pool_recovery_stake) }}</td>
+      <td>${{ "%.2f"|format(t.final_stake) }}</td>
+      <td>${{ "%.2f"|format(t.win_pool_contribution) }}</td>
+      <td style="min-width: 320px; white-space: normal;">{{ t.note }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
 
 <h2 class="section">Account Balance — Hourly</h2>
 <img data-live="/charts/tab6/balance.png" src="/charts/tab6/balance.png" alt="Account balance over time" style="max-width: 100%;">
