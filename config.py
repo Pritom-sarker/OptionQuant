@@ -80,7 +80,7 @@ MINTICK = 0.01             # matches Pine's syminfo.mintick floor for BTC/USDT-s
 # later disagrees with the provisional one — they ride to expiry like any
 # other trade; only a log line records the mismatch.
 DEFAULT_TAB1_EARLY_ENTRY_ENABLED  = True
-DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC = 15
+DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC = 60
 
 # ─── Timing ────────────────────────────────────────────────────────────────
 REFRESH_MS = 60_000   # dashboard + candle refresh, once a minute
