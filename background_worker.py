@@ -160,16 +160,24 @@ def _tick_tab1() -> None:
         # is never cancelled/exited here, this is purely a log line so
         # mismatches are visible.
         early = state.tab1_early_prediction
-        if (early is not None and active_row is not None
-                and int(early["time"]) == int(active_row["time"])
-                and early.get("predicted_next") != active_row.get("predicted_next")):
+        early_resolved = (early is not None and active_row is not None
+                          and int(early["time"]) == int(active_row["time"]))
+        if early_resolved and early.get("predicted_next") != active_row.get("predicted_next"):
             log.warning("[Tab1] EARLY ENTRY MISMATCH window=%s provisional=%s actual=%s — "
                         "any trade already entered off the provisional signal stays open.",
                         active_row["time"], early.get("predicted_next"), active_row.get("predicted_next"))
-        if early is not None and active_row is not None and int(early["time"]) == int(active_row["time"]):
+        if early_resolved:
             state.tab1_early_prediction = None   # this window is resolved for real now
 
-        state.tab1_prediction = active_row
+        # A provisional signal still staged for a window that hasn't closed
+        # yet (early is not None and NOT early_resolved) must never be
+        # stomped here — this tick's active_row only ever reflects closed
+        # candles, so it can't possibly know about that still-forming
+        # window yet. Without this guard, tab1_loop's own 2s cadence
+        # overwrote tab1_early_loop's provisional write within ~2s of it
+        # being set, every time, making Early Entry effectively invisible.
+        if early is None or early_resolved:
+            state.tab1_prediction = active_row
         state.tab1_df = df
         state.tab1_computed = {
             "pat_dir": combined_dir, "act_ok": combined_act_ok, "results": results,
@@ -230,8 +238,14 @@ def _tick_tab1_early() -> None:
                                  ev["combined_act_ok"], last_n=1)[0]
 
     with state.lock:
+        already_staged = (state.tab1_early_prediction is not None
+                          and int(state.tab1_early_prediction["time"]) == int(forming["time"]))
         if row["predicted_next"] in ("GREEN", "RED"):
             row["provisional"] = True
+            if not already_staged:
+                log.info("[Tab1] EARLY ENTRY %s matched %.0fs before candle close (window=%s) — staged for Tab 3",
+                          row["predicted_next"], seconds_to_close,
+                          time.strftime("%H:%M:%S", time.localtime(forming["time"])))
             state.tab1_early_prediction = row
             state.tab1_prediction = row
         else:
