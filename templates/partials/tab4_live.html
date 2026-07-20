@@ -17,6 +17,11 @@ Waiting for a Prediction Engine signal and Order Book confirmation.</div>
   {{ m.metric("Entry Status", item.entry_status) }}
 </div>
 <div class="metric-grid">
+  {{ m.metric("Order Placed", item.entry_time_str) }}
+  {{ m.metric("Signal → Order Latency", item.latency_str) }}
+</div>
+<p class="caption"><a href="{{ item.market_url }}" target="_blank" rel="noopener">🔗 View this contract on Polymarket</a></p>
+<div class="metric-grid">
   {{ m.metric("Limit Order Price", item.limit_price) }}
   {{ m.metric("Best Bid", item.best_bid) }}
   {{ m.metric("Best Ask", item.best_ask) }}

@@ -20,6 +20,16 @@ def _fmt(v, nd=2):
     return round(v, nd) if v is not None and pd.notna(v) else "—"
 
 
+def _latency_str(signal_time, entry_time) -> str:
+    """How long after the signal fired the order was actually placed —
+    the number the "which candle did this really enter" question always
+    comes down to. "—" whenever either side is missing (no entry yet, or
+    the originating candidate row is gone)."""
+    if not signal_time or not entry_time:
+        return "—"
+    return f"{entry_time - signal_time:+.0f}s"
+
+
 def build_tab1_context() -> dict:
     with state.lock:
         prediction = dict(state.tab1_prediction) if state.tab1_prediction else None
@@ -205,6 +215,10 @@ def build_tab3_context() -> dict:
             "has_trade": trade is not None,
             "pnl_pct": (f"{latest_trade['pnl_pct'] * 100:+.1f}%" if latest_trade else None),
             "time_remaining": (f"{latest_trade['time_remaining']:.0f}s" if latest_trade else None),
+            "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{candidate.market_slug}",
+            "signal_time_str": time.strftime("%H:%M:%S", time.localtime(candidate.signal_time)),
+            "entry_time_str": (time.strftime("%H:%M:%S", time.localtime(trade.entry_time)) if trade else "—"),
+            "latency_str": _latency_str(candidate.signal_time, trade.entry_time if trade else None),
         })
 
     return {"market_ok": market_ok, "has_activity": bool(items), "items": items,
@@ -303,6 +317,10 @@ def _build_trade_detail_item(candidate, trade) -> dict:
         "selected_side": candidate.selected_side if candidate else trade.selected_side,
         "signal_time_str": (time.strftime("%H:%M:%S", time.localtime(candidate.signal_time))
                              if candidate else "—"),
+        "entry_time_str": (time.strftime("%H:%M:%S", time.localtime(trade.entry_time)) if trade else "—"),
+        "latency_str": _latency_str(candidate.signal_time if candidate else None,
+                                     trade.entry_time if trade else None),
+        "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{(candidate.market_slug if candidate else trade.market_slug)}",
         "entry_status": _entry_status_label(candidate, trade),
         "limit_price": f"{candidate.limit_price:.3f}" if candidate and candidate.limit_price else "—",
         "best_bid": f"{latest_cand['best_bid']:.3f}" if latest_cand else "—",
@@ -403,6 +421,10 @@ def build_trade_report(row: dict) -> dict:
         "row": row, "candidate": candidate_row,
         "signal_time_str": (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(candidate_row["signal_time"]))
                              if candidate_row else "—"),
+        "entry_time_str": (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["entry_time"]))
+                            if row.get("entry_time") else "—"),
+        "latency_str": _latency_str(candidate_row["signal_time"] if candidate_row else None, row.get("entry_time")),
+        "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{row['market_slug']}",
         "limit_price_at_entry": (f"{cand_snaps[-1]['limit_price']:.3f}"
                                   if cand_snaps and cand_snaps[-1]["limit_price"] is not None else "—"),
         "snapshots_before_entry": len(cand_snaps),
@@ -428,7 +450,7 @@ def build_tab5_context() -> dict:
     all_trades alone — a skipped candidate never risked a stake, so it must
     never touch win rate/profit/PF numbers.
     """
-    all_trades = trade_db.fetch_all_trades()
+    all_trades = trade_db.fetch_all_trades_with_signal_time()
     skipped = trade_db.fetch_skipped_late_candidates()
     if not all_trades and not skipped:
         return {"has_trades": False}
@@ -440,7 +462,11 @@ def build_tab5_context() -> dict:
         icon = "🟢" if t["final_result"] == "WIN" else ("🔴" if t["final_result"] == "LOSS" else "⏳")
         rows.append({
             "kind": "trade", "id": t["id"], "icon": icon, "sort_ts": t["entry_time"] or 0,
-            "signal_time_str": time.strftime("%H:%M:%S", time.localtime(t["entry_time"])) if t["entry_time"] else "—",
+            "signal_time_str": (time.strftime("%H:%M:%S", time.localtime(t["signal_time"]))
+                                 if t.get("signal_time") else "—"),
+            "entry_time_str": time.strftime("%H:%M:%S", time.localtime(t["entry_time"])) if t["entry_time"] else "—",
+            "latency_str": _latency_str(t.get("signal_time"), t["entry_time"]),
+            "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{t['market_slug']}",
             "side": "YES" if t["direction"] == 1 else "NO", "entry_mode": t["entry_mode"],
             "entry_price": round(t["entry_price"], 3) if t["entry_price"] is not None else "—",
             "exit_price": round(t["exit_price"], 3) if t["exit_price"] is not None else "—",
@@ -452,6 +478,8 @@ def build_tab5_context() -> dict:
         rows.append({
             "kind": "skipped", "id": c["id"], "icon": "⏭️", "sort_ts": c["signal_time"] or 0,
             "signal_time_str": time.strftime("%H:%M:%S", time.localtime(c["signal_time"])) if c["signal_time"] else "—",
+            "entry_time_str": "—", "latency_str": "—",
+            "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{c['market_slug']}",
             "side": "YES" if c["direction"] == 1 else "NO", "entry_mode": "—",
             "entry_price": "—", "exit_price": "—", "pnl": "—",
             "result": "SKIPPED", "status": "SKIPPED_LATE", "prediction": c["prediction"],

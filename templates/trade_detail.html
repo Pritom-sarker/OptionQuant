@@ -11,12 +11,15 @@
 <h1 class="page-title">{{ icon }} Trade #{{ row.id }} — {{ row.prediction }} — {{ row.status }}
   {% if return_pct is not none %}({{ row.final_result }}, {{ "%+.1f%%"|format(return_pct * 100) }}){% endif %}
 </h1>
+<p class="caption"><a href="{{ report.market_url }}" target="_blank" rel="noopener">🔗 View this contract on Polymarket</a></p>
 
 {% set r = report %}
 <h2 class="section">Signal Section</h2>
 {% if r.candidate %}
 <div class="table-scroll"><table class="data-table"><tbody>
   <tr><th>Signal Time</th><td>{{ r.signal_time_str }}</td></tr>
+  <tr><th>Order Placed</th><td>{{ r.entry_time_str }}</td></tr>
+  <tr><th>Signal → Order Latency</th><td>{{ r.latency_str }}</td></tr>
   <tr><th>Direction</th><td>{{ r.candidate.prediction }}</td></tr>
   <tr><th>Selected Side</th><td>{{ r.candidate.selected_side }}</td></tr>
   <tr><th>Open/High/Low/Close</th><td>{{ r.candidate.signal_open }} / {{ r.candidate.signal_high }} / {{ r.candidate.signal_low }} / {{ r.candidate.signal_close }}</td></tr>

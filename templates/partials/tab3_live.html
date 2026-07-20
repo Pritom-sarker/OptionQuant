@@ -20,6 +20,12 @@ Waiting for a Prediction Engine signal and Order Book confirmation.</div>
   {{ m.metric("Current Price", item.current_price) }}
   {{ m.metric("Pressure", item.pressure_str) }}
 </div>
+<div class="metric-grid">
+  {{ m.metric("Signal Time", item.signal_time_str) }}
+  {{ m.metric("Order Placed", item.entry_time_str) }}
+  {{ m.metric("Signal → Order Latency", item.latency_str) }}
+</div>
+<p class="caption"><a href="{{ item.market_url }}" target="_blank" rel="noopener">🔗 View this contract on Polymarket</a></p>
 {% if item.has_trade %}
 <div class="metric-grid">
   {{ m.metric("Unrealized PnL", item.pnl_pct, value_class=("green" if item.pnl_pct and item.pnl_pct.startswith("+") else "red")) }}
