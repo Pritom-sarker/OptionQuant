@@ -191,20 +191,31 @@ def _tick_tab1_early() -> None:
     """
     Opt-in Early Entry (default OFF, see config.DEFAULT_TAB1_EARLY_ENTRY_
     ENABLED): checks the still-forming candle's live OHLC against the same
-    pattern pipeline _tick_tab1 uses, but only in the last `early_entry_
-    lead_sec` seconds before it closes. If it already matches, that's staged
-    into state.tab1_prediction early (tagged "provisional") so Tab 3 can act
-    on it immediately instead of waiting for the close plus the normal
-    detection cycle. Runs on its own dedicated loop (tab1_early_loop, much
-    tighter cadence than tab1_loop — see TAB1_EARLY_POLL_INTERVAL_SEC) since
-    it only needs the already-cached state.tab1_df, not a full _tick_tab1()
-    re-run. A genuine real closed-candle result (written by _tick_tab1, on
-    its own separate loop) is never stomped by a stale provisional one for a
+    pattern pipeline _tick_tab1 uses. Two separate things happen here, on
+    different gates:
+
+    1. state.tab1_forming_breakdown is recomputed on EVERY tick this candle
+       is still open, regardless of how much time is left — this is pure
+       visibility (Tab 1's live "how is the running candle trending" table),
+       never used to decide anything.
+    2. Actually staging a signal (state.tab1_early_prediction /
+       state.tab1_prediction, tagged "provisional") only happens in the last
+       `early_entry_lead_sec` seconds before close — the confirmation gate.
+       A pattern that already matches at minute 3 is visible via (1) the
+       whole time, but is never acted on until (2)'s window opens.
+
+    Runs on its own dedicated loop (tab1_early_loop, much tighter cadence
+    than tab1_loop — see TAB1_EARLY_POLL_INTERVAL_SEC) since it only needs
+    the already-cached state.tab1_df, not a full _tick_tab1() re-run. A
+    genuine real closed-candle result (written by _tick_tab1, on its own
+    separate loop) is never stomped by a stale provisional one for a
     *different*, already-passed window; see the "not within lead window"
     branch below.
     """
     settings = state.tab1_settings
     if not settings.get("early_entry_enabled"):
+        with state.lock:
+            state.tab1_forming_breakdown = None
         return
 
     with state.lock:
@@ -218,17 +229,21 @@ def _tick_tab1_early() -> None:
 
     lead = settings.get("early_entry_lead_sec", config.DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC)
     seconds_to_close = forming["time"] - time.time()
+    seconds_from_open = config.CANDLE_TIMEFRAME_MIN * 60 - seconds_to_close
 
-    with state.lock:
-        real_pred = state.tab1_prediction
-    if real_pred is not None and int(real_pred["time"]) == int(forming["time"]):
-        return   # the real closed-candle signal for this exact window already landed
-
-    if not (0 < seconds_to_close <= lead):
+    # "Resolved" must be checked against the actual closed-candle data, never
+    # against state.tab1_prediction's own time — Early Entry itself writes
+    # tab1_prediction with time == forming["time"] the moment it stages a
+    # signal, so comparing against that field would make this look
+    # "resolved" one tick after staging, even though the candle is still
+    # very much still forming. Comparing against the latest CLOSED candle's
+    # own time is the only check that can't be self-fulfilled this way.
+    latest_closed_time = int(closed_candles_df["time"].iloc[-1]) if len(closed_candles_df) else None
+    resolved = latest_closed_time is not None and latest_closed_time >= int(forming["time"])
+    if resolved:
         with state.lock:
-            if state.tab1_early_prediction is not None and int(state.tab1_early_prediction["time"]) != int(forming["time"]):
-                state.tab1_early_prediction = None   # stale provisional from a window that already passed
-        return
+            state.tab1_forming_breakdown = None   # real data has landed for this window — nothing left to preview
+        return   # the real closed-candle signal for this exact window already landed
 
     closed_candles = closed_candles_df[["time", "open", "high", "low", "close", "volume"]].to_dict("records")
     bdf = se.candles_to_df(closed_candles + [forming])
@@ -238,10 +253,35 @@ def _tick_tab1_early() -> None:
                                  ev["combined_act_ok"], last_n=1)[0]
 
     with state.lock:
+        state.tab1_forming_breakdown = {
+            "window_time": forming["time"],
+            "seconds_from_open": seconds_from_open, "seconds_to_close": seconds_to_close,
+            "predicted_next": row["predicted_next"], "reason": row["reason"],
+            "within_action_window": 0 < seconds_to_close <= lead,
+            "breakdown": [
+                {"pattern": name, "rows": se.build_condition_breakdown(
+                    bdf, p["pat_dir"], name, settings["atr_mult"], p["enabled_filters"], idx=-1)}
+                for name, p in ev["per_pattern"].items()
+            ],
+        }
+
+    if not (0 < seconds_to_close <= lead):
+        with state.lock:
+            if state.tab1_early_prediction is not None and int(state.tab1_early_prediction["time"]) != int(forming["time"]):
+                state.tab1_early_prediction = None   # stale provisional from a window that already passed
+        return
+
+    with state.lock:
         already_staged = (state.tab1_early_prediction is not None
                           and int(state.tab1_early_prediction["time"]) == int(forming["time"]))
         if row["predicted_next"] in ("GREEN", "RED"):
             row["provisional"] = True
+            # confirmed_at is the FIRST tick this window matched, not "now" —
+            # otherwise it would keep sliding forward every tick for as long
+            # as the match holds, making the "confirmed at" time on the UI
+            # banner meaningless.
+            row["confirmed_at"] = (state.tab1_early_prediction["confirmed_at"]
+                                    if already_staged else time.time())
             if not already_staged:
                 log.info("[Tab1] EARLY ENTRY %s matched %.0fs before candle close (window=%s) — staged for Tab 3",
                           row["predicted_next"], seconds_to_close,

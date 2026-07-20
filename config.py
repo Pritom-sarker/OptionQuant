@@ -189,15 +189,15 @@ DEFAULT_TAB3_IMMEDIATE_MODE = True
 # window. Outside that window it holds off (WAIT) even if the profit factor
 # floor is met; still bounded overall by entry_deadline_sec above, which
 # eventually drops the candidate as SKIPPED_LATE if it never lines up.
-# 25s: deliberately tight — if it can't get filled within the first ~25s of
-# the candle actually opening, the price has moved too far from "the open"
-# to be worth chasing; better to skip the trade than buy deep and late. This
-# only works because Early Entry (Tab 1) + the fast-poll tick (see
-# fast_poll_lead_sec below) already have the candidate created and actively
-# checking price ~15s BEFORE the candle even opens — most of the old
-# candidate-creation latency that justified a wider window is absorbed
-# before signal_time is even reached. Configurable on Settings (Tab 3).
-DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC = 25
+# 60s, matching DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC: Early Entry now creates
+# the candidate up to a full 60s BEFORE the candle even opens (signal_time),
+# so since_open starts as low as -60 at creation. A tighter window here (a
+# prior version used 25s) left most of that 60s lead dead — the candidate
+# just sat WAITing "outside the window" until since_open climbed back above
+# -window, wasting the exact runway Early Entry exists to buy. Matching the
+# two numbers means a candidate is eligible to buy the moment it's created,
+# for its entire early lead plus another 60s past the real open.
+DEFAULT_TAB3_IMMEDIATE_ENTRY_WINDOW_SEC = 60
 
 # Backstop for signals that still land late despite Early Entry (see Tab 1's
 # early-entry settings above): once a candidate's predicted window has

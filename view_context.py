@@ -38,12 +38,41 @@ def build_tab1_context() -> dict:
         df = state.tab1_df
         backfill_rows = list(state.backfill_rows)
         backfill_total = state.backfill_total
+        forming = dict(state.tab1_forming_breakdown) if state.tab1_forming_breakdown else None
 
     if prediction is not None:
         prediction["time_str"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(prediction["time"]))
+        # prediction["time"] doubles as the candle that was analyzed (its own
+        # close) AND the traded window's own open (they're the same instant
+        # by construction — see trade_engine/polymarket_api's window-start
+        # docstrings) — spelled out under its own label since that dual
+        # meaning is exactly what's confusing to read at a glance.
+        prediction["target_window_str"] = prediction["time_str"]
+        if prediction.get("confirmed_at"):
+            prediction["confirmed_at_str"] = time.strftime("%H:%M:%S", time.localtime(prediction["confirmed_at"]))
+
+    forming_context = None
+    if forming is not None:
+        lead = settings.get("early_entry_lead_sec", config.DEFAULT_TAB1_EARLY_ENTRY_LEAD_SEC)
+        forming_context = {
+            "predicted_next": forming["predicted_next"],
+            "seconds_from_open": round(forming["seconds_from_open"]),
+            "seconds_to_close": round(forming["seconds_to_close"]),
+            "within_action_window": forming["within_action_window"],
+            "confirmation_status_str": ("OPEN — will stage now" if forming["within_action_window"]
+                                        else f"Not yet — opens with {lead:.0f}s left on this candle"),
+            "target_window_str": time.strftime("%H:%M:%S", time.localtime(forming["window_time"])),
+            "breakdown_groups": [
+                {"pattern": g["pattern"], "rows": [
+                    {"Condition": b["condition"], "Actual": b["actual"], "Required": b["required"], "Status": b["status"]}
+                    for b in g["rows"]
+                ]}
+                for g in forming["breakdown"]
+            ],
+        }
 
     if df is None or computed is None:
-        return {"candles_ok": False, "prediction": prediction, "settings": settings}
+        return {"candles_ok": False, "prediction": prediction, "settings": settings, "forming": forming_context}
 
     last = df.iloc[-1]
     stats = computed["stats"]
@@ -101,7 +130,7 @@ def build_tab1_context() -> dict:
         "last_refresh_str": time.strftime("%H:%M:%S", time.localtime(computed["last_refreshed"])),
         "candles_count": len(df), "min_needed": min_needed,
         "breakdown_groups": breakdown_groups, "last_n_rows": last_n_rows, "last_n_count": config.LAST_N_CANDLES_TABLE,
-        "backfill": backfill,
+        "backfill": backfill, "forming": forming_context,
     }
 
 
@@ -462,6 +491,11 @@ def build_tab5_context() -> dict:
         icon = "🟢" if t["final_result"] == "WIN" else ("🔴" if t["final_result"] == "LOSS" else "⏳")
         rows.append({
             "kind": "trade", "id": t["id"], "icon": icon, "sort_ts": t["entry_time"] or 0,
+            # Independently derived from the market_slug actually traded (not
+            # copied from signal_time) so it doubles as a cross-check — if
+            # this ever disagrees with Signal Time, that's a real targeting
+            # bug, not just a display issue.
+            "candle_str": time.strftime("%H:%M:%S", time.localtime(trade_engine.parse_window_start_ts(t["market_slug"]))),
             "signal_time_str": (time.strftime("%H:%M:%S", time.localtime(t["signal_time"]))
                                  if t.get("signal_time") else "—"),
             "entry_time_str": time.strftime("%H:%M:%S", time.localtime(t["entry_time"])) if t["entry_time"] else "—",
@@ -477,6 +511,7 @@ def build_tab5_context() -> dict:
     for c in skipped:
         rows.append({
             "kind": "skipped", "id": c["id"], "icon": "⏭️", "sort_ts": c["signal_time"] or 0,
+            "candle_str": time.strftime("%H:%M:%S", time.localtime(trade_engine.parse_window_start_ts(c["market_slug"]))),
             "signal_time_str": time.strftime("%H:%M:%S", time.localtime(c["signal_time"])) if c["signal_time"] else "—",
             "entry_time_str": "—", "latency_str": "—",
             "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{c['market_slug']}",

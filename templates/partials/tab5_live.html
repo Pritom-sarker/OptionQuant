@@ -29,12 +29,12 @@
 
 <div class="table-scroll">
 <table class="data-table">
-  <thead><tr><th>ID</th><th>Signal Time</th><th>Order Placed</th><th>Latency</th><th>Side</th><th>Entry Type</th><th>Entry Price</th>
+  <thead><tr><th>ID</th><th>Candle For Prediction</th><th>Signal Time</th><th>Order Placed</th><th>Latency</th><th>Side</th><th>Entry Type</th><th>Entry Price</th>
     <th>Exit Price</th><th>Profit</th><th>Result</th><th>Status</th><th>Market</th><th>Details</th></tr></thead>
   <tbody>
     {% for t in rows %}
     <tr{{ ' style="opacity: 0.6;"' | safe if t.kind == "skipped" else "" }}>
-      <td>{{ t.id }}</td><td>{{ t.signal_time_str }}</td><td>{{ t.entry_time_str }}</td><td>{{ t.latency_str }}</td>
+      <td>{{ t.id }}</td><td>{{ t.candle_str }}</td><td>{{ t.signal_time_str }}</td><td>{{ t.entry_time_str }}</td><td>{{ t.latency_str }}</td>
       <td>{{ t.side }}</td><td>{{ t.entry_mode }}</td>
       <td>{{ t.entry_price }}</td><td>{{ t.exit_price }}</td><td>{{ t.pnl }}</td>
       <td><span class="badge {{ 'green' if t.result=='WIN' else ('red' if t.result=='LOSS' else 'neutral') }}">{{ t.result }}</span></td>

@@ -67,6 +67,13 @@ class AppState:
         # only) — see background_worker._tick_tab1_early. None whenever Early
         # Entry is off or no provisional signal is currently pending.
         self.tab1_early_prediction: Optional[dict] = None
+        # Live view of the CURRENTLY FORMING candle's own condition breakdown
+        # — recomputed every tick of tab1_early_loop (every 1s) regardless of
+        # the early-entry lead window, so the UI can show how the still-open
+        # candle is trending (e.g. "already passing at minute 3") well before
+        # it's actually eligible to be staged/acted on. None once the window
+        # this describes has resolved for real (its candle has closed).
+        self.tab1_forming_breakdown: Optional[dict] = None
         self.tab1_last_refresh: float = 0.0
         self.tab1_df = None            # last computed candle DataFrame (for the candle chart route)
         self.tab1_computed: Optional[dict] = None   # pat_dir/filters/act_ok/results/stats bundle

@@ -6,12 +6,22 @@
      style="background: var(--{{ 'green-bg' if banner_class=='green' else ('red-bg' if banner_class=='red' else 'surface') }});
             border-color: var(--{{ 'green' if banner_class=='green' else ('red' if banner_class=='red' else 'border') }});">
   <div class="headline" style="color: var(--{{ 'green' if banner_class=='green' else ('red' if banner_class=='red' else 'text-dim') }});">
-    Current Active Prediction: {{ pred }}{% if prediction and prediction.provisional %} <span class="badge" style="background: var(--amber); color: #000;">SIGNAL CONFIRMED — candle still forming, trying to place order</span>{% endif %}
+    {% if prediction and prediction.provisional %}
+      <span class="badge" style="background: var(--amber); color: #000;">NEXT CANDLE ENTRY CONFIRMED — {{ pred }}</span>
+    {% else %}
+      Current Active Prediction: {{ pred }}
+    {% endif %}
   </div>
   <div class="detail">
     {% if prediction %}
-      Signal Candle Time: {{ prediction.time_str }}<br>
-      Signal Candle Close: ${{ "%.2f"|format(prediction.close) }}<br>
+      {% if prediction.provisional %}
+        Confirmed At: {{ prediction.confirmed_at_str }}<br>
+        Target Window (candle being traded): {{ prediction.target_window_str }}<br>
+      {% else %}
+        Signal Candle Time: {{ prediction.time_str }}<br>
+        Target Window (candle being traded): {{ prediction.target_window_str }}<br>
+        Signal Candle Close: ${{ "%.2f"|format(prediction.close) }}<br>
+      {% endif %}
       Current Result: {{ prediction.result }}<br>
       Reason: {{ prediction.reason }}
     {% else %}
@@ -20,6 +30,26 @@
     {% endif %}
   </div>
 </div>
+
+<h2 class="section">Forming Candle — Live (Currently Running)</h2>
+{% if forming %}
+<p class="caption">This is the candle in progress right now — unlike the table further down (which only reflects
+  the last CLOSED candle), this recomputes every ~1s off the still-moving OHLC. A match here is only a preview
+  until it's confirmed above.</p>
+<div class="metric-grid">
+  {{ m.metric("Time Into Candle", "%ds"|format(forming.seconds_from_open)) }}
+  {{ m.metric("Time To Close", "%ds"|format(forming.seconds_to_close)) }}
+  {{ m.metric("Currently Matching", forming.predicted_next, value_class=("green" if forming.predicted_next=="GREEN" else ("red" if forming.predicted_next=="RED" else None))) }}
+  {{ m.metric("Confirmation Window", forming.confirmation_status_str) }}
+</div>
+<p class="caption">If confirmed, this trades window <strong>{{ forming.target_window_str }}</strong> (the next candle, not this one).</p>
+{% for g in forming.breakdown_groups %}
+<h3 class="subsection">{{ g.pattern }}</h3>
+{{ m.data_table(["Condition","Actual","Required","Status"], g.rows) }}
+{% endfor %}
+{% else %}
+<div class="callout idle">Early Entry is off, or no forming-candle data yet.</div>
+{% endif %}
 
 {% if not candles_ok %}
 <div class="callout" style="border-left-color: var(--amber);">Could not fetch real BTC/USD candle data right now. Retrying next refresh.</div>
@@ -65,7 +95,9 @@
   <img data-live="/charts/tab1/candles.png" src="/charts/tab1/candles.png" alt="BTCUSD candle chart">
 </div>
 
-<h2 class="section">Current Candle — What's Matching, What's Missing</h2>
+<h2 class="section">Last Closed Candle — What's Matching, What's Missing</h2>
+<p class="caption">This is a frozen snapshot of the candle that already closed — it only updates once every 5
+  minutes. For the candle in progress right now, see "Forming Candle — Live" above.</p>
 {% if breakdown_groups %}
 {% for g in breakdown_groups %}
 <h3 class="subsection">{{ g.pattern }}</h3>
@@ -74,7 +106,7 @@
 {% else %}
 <div class="callout" style="border-left-color: var(--amber);">No base pattern enabled — enable at least one in Settings.</div>
 {% endif %}
-<div class="caption">Current candle closed at {{ last_time_str }}.</div>
+<div class="caption">Last closed candle closed at {{ last_time_str }}.</div>
 
 <h2 class="section">Last {{ last_n_count }} Candle Signal Check</h2>
 {{ m.data_table(["Time","Open","High","Low","Close","Pattern","Predicted Next","Next Close (actual)","Result","Reason"], last_n_rows) }}
