@@ -379,6 +379,66 @@ def _build_trade_detail_item(candidate, trade) -> dict:
     }
 
 
+def build_live_trade_context() -> dict:
+    """
+    The single most relevant trade right now, no list — the clean "when did
+    the signal fire, when was the order placed, how much latency, what
+    happened to the money" view. Prefers an OPEN slot (reuses
+    _build_trade_detail_item's exact shape, so this never drifts from what
+    the old per-trade detail view showed — just rendered without its
+    chart-path fields); falls back to the most recent settled trade from
+    trade_db when nothing is currently live.
+    """
+    with state.lock:
+        slots = list(state.tab3_slots)
+        mm_settings = dict(state.mm_settings)
+        mm_tiers = list(state.mm_tiers)
+
+    item = None
+    if slots:
+        open_slots = [s for s in slots if s["trade"] is not None and s["trade"].status == "OPEN"]
+        chosen = open_slots[-1] if open_slots else slots[-1]
+        item = _build_trade_detail_item(chosen["candidate"], chosen["trade"])
+    else:
+        rows = trade_db.fetch_all_trades_with_signal_time()
+        if rows:
+            row = rows[0]
+            item = {
+                "has_activity": False, "is_historical": True,
+                "signal_direction": row["prediction"],
+                "signal_time_str": (time.strftime("%H:%M:%S", time.localtime(row["signal_time"]))
+                                     if row.get("signal_time") else "—"),
+                "entry_time_str": time.strftime("%H:%M:%S", time.localtime(row["entry_time"])),
+                "latency_str": _latency_str(row.get("signal_time"), row["entry_time"]),
+                "entry_status": row["status"],
+                "entry_price": f"{row['entry_price']:.3f}",
+                "current_price": f"{row['exit_price']:.3f}" if row.get("exit_price") is not None else "—",
+                "stake": f"${row['stake']:.2f}",
+                "reason": row.get("entry_reason") or "—",
+                "market_url": f"{config.POLYMARKET_EVENT_URL_BASE}/{row['market_slug']}",
+                "orderbook_snap": None,
+            }
+
+    mm_result = mm.next_trade_amount_tiered(trade_db.fetch_all_trades(), mm_settings, mm_tiers)
+    live_status = mm_result["live_status"]
+    final_stake = live_status["final_stake"]
+
+    return {
+        "has_item": item is not None, "item": item,
+        "money": {
+            "cycle_order_number": live_status["cycle_order_number"],
+            "active_recovery_tier": live_status["active_recovery_tier"],
+            "temporary_cycle_loss": _fmt(live_status["temporary_cycle_loss"]),
+            "permanent_loss_pool": _fmt(live_status["permanent_loss_pool"]),
+            "win_pool": _fmt(live_status["win_pool"]),
+            "lp_tax": _fmt(live_status["loss_pool_extra_stake"]),
+            "next_stake": f"${final_stake:.2f}" if final_stake is not None else "—",
+            "halted": live_status["halted"], "halt_reason": live_status.get("halt_reason"),
+        },
+        "now_str": time.strftime("%H:%M:%S"),
+    }
+
+
 def _loss_streaks(trades_newest_first: list[dict]) -> dict:
     """
     trades_newest_first: trade_db.fetch_all_trades()'s own ordering (id DESC).

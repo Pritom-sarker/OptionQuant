@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Analytical Dashboard{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">Analytical Dashboard</h1>
+    <p class="caption">Full trade history, stats, and the money-management ledger/charts. For the current trade only, see Live Trade.</p>
+  </div>
+  <span class="live-status" id="live-status-analytics"><span class="live-dot" id="live-dot-analytics"></span><span id="live-text-analytics">LIVE</span> — charts refresh every 30s · <span id="live-updated-analytics">last update: —</span></span>
+</div>
+
+<h2 class="section">Trade History</h2>
+<div id="tab5-live">
+  {% include "partials/tab5_live.html" %}
+</div>
+
+<hr class="divider" style="margin: 32px 0; border-top-width: 2px;">
+
+<h2 class="section">Money Management</h2>
+<div id="tab6-live">
+  {% include "partials/tab6_live.html" %}
+</div>
+
+<script>
+  startPolling("/api/tab5/live", "tab5-live", 2000, "analytics");
+  startPolling("/api/tab6/live", "tab6-live", 2000);
+  startImageRefresh(30000);
+</script>
+{% endblock %}

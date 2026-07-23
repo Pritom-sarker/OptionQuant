@@ -50,7 +50,7 @@
 </form>
 
 <h2 class="section">Live Trades — Trading Engine</h2>
-<p class="caption">Every trade's stake is sized live by Money Management's settings, not a flat amount here — see the <a href="/tab6">Money Management</a> page.
+<p class="caption">Every trade's stake is sized live by the Money Management settings below.
   A candidate whose window has already opened for more than the Entry Deadline below with no entry yet is skipped instead of entered late — see Trade History's "Skipped (Late)" rows.
   Tune the deadline to match your entry mode: short (e.g. 10s) for Immediate Entry, longer (e.g. 130s) to give the order-book recovery-entry mode room to find its setup.</p>
 <form class="settings-form" method="post" action="/settings/tab3">
@@ -80,6 +80,76 @@
   <div class="caption" style="grid-column: 1 / -1;">While any candidate is still observing (no order placed yet) and within Fast-Poll Lead Time of its candle's open — on either side, up to whichever entry cutoff currently applies (Immediate Entry Window, or Entry Deadline otherwise) — the whole engine ticks at Fast-Poll Tick Interval instead of Refresh Interval, to catch the exact right price. Falls back to Refresh Interval as soon as an order is placed or that window closes.</div>
 
   <div class="form-actions"><button type="submit">Apply Live Trades Settings</button></div>
+</form>
+
+<h2 class="section" id="money-management">Money Management</h2>
+<p class="caption">Replays every real settled trade through a tiered cycle/win-pool recovery model — consecutive losses build a
+  <strong>temporary cycle loss</strong>, sized order-by-order via the recovery tiers below; whatever a cycle-ending win
+  doesn't fully recover moves into the <strong>permanent loss pool</strong>, paid down gradually on top of every future
+  order. Every real trade Live Trades places is sized live from these exact settings — see the Analytical Dashboard for
+  the live ledger/balance charts.</p>
+
+{% if tier_save_error %}
+<div class="callout" style="border-left-color: var(--red);">Recovery tiers were not saved — they must start at
+  position 1, be contiguous with no gaps/overlaps, and end exactly at Maximum Cycle Orders. Other settings below were
+  still applied. Fix the tiers and re-submit.</div>
+{% endif %}
+{% if tier_errors %}
+<div class="callout" style="border-left-color: var(--red);">
+  <strong>Currently active tiers are invalid:</strong>
+  <ul style="margin: 6px 0 0 18px;">{% for e in tier_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<form class="settings-form" method="post" action="/settings/money_management">
+  <div class="field"><label>Starting Balance ($) — display only</label><input type="number" step="1" min="1" name="starting_balance" value="{{ settings.starting_balance }}"></div>
+  <div class="field"><label>Base Stake ($) — order 1 of every new cycle</label><input type="number" step="0.1" min="0.01" name="base_stake" value="{{ settings.base_stake }}"></div>
+  <div class="field"><label>Net Profit Ratio</label><input type="number" step="0.05" min="0.01" value="1.0" disabled>
+    <span class="caption" style="margin:0;">Live trades always use each trade's own real payout, not a fixed ratio.</span></div>
+  <div class="field"><label>Maximum Cycle Orders</label><input type="number" step="1" min="1" name="maximum_cycle_orders" value="{{ settings.maximum_cycle_orders }}"></div>
+  <div class="field">
+    <label>When Maximum Cycle Orders Is Reached</label>
+    <select name="fallback_mode">
+      <option value="stop" {{ "selected" if settings.fallback_mode == "stop" else "" }}>Stop new orders (force-close the cycle)</option>
+      <option value="continue" {{ "selected" if settings.fallback_mode == "continue" else "" }}>Continue using the final tier percentage</option>
+      <option value="manual" {{ "selected" if settings.fallback_mode == "manual" else "" }}>Reset only after manual confirmation (halts entries)</option>
+    </select>
+  </div>
+  <div class="field"><label>Max-Cycle Timeout — % Of Unresolved Loss Sent To Permanent Pool</label><input type="number" step="1" min="0" max="100" name="cycle_timeout_lp_pct" value="{{ (settings.cycle_timeout_lp_pct * 100)|round(1) }}"></div>
+
+  <div class="field"><label>Static LP % Added To Order 1 (of the permanent pool)</label><input type="number" step="1" min="0" max="100" name="static_lp_pct" value="{{ (settings.static_lp_pct * 100)|round(1) }}"></div>
+  <div class="field"><label>Max First Order Size ($) — caps base + LP add-on</label><input type="number" step="0.1" min="0.01" name="max_first_order_stake" value="{{ settings.max_first_order_stake }}"></div>
+  <div class="field"><label>Win Pool Contribution % (of each win's profit)</label><input type="number" step="1" min="0" max="100" name="win_pool_contribution_pct" value="{{ (settings.win_pool_contribution_pct * 100)|round(1) }}"></div>
+  <div class="field"><label>Win Pool LP Coverage % (of permanent pool paid from win pool)</label><input type="number" step="1" min="0" max="100" name="win_pool_lp_coverage_pct" value="{{ (settings.win_pool_lp_coverage_pct * 100)|round(1) }}"></div>
+
+  <div class="caption" style="grid-column: 1 / -1;">Order 1's stake = Base Stake + (Permanent Pool × Static LP %), capped at Max First Order Size. Order 2+ = max(Base Stake, Temporary Cycle Loss × the tier % for that order number below).</div>
+
+  <div style="grid-column: 1 / -1;">
+    <label style="font-size: 12px; color: var(--text-dim); font-weight: 500; display:block; margin-bottom:6px;">Recovery Tiers — must start at 1, be contiguous, and end exactly at Maximum Cycle Orders</label>
+    <div class="table-scroll">
+    <table class="data-table">
+      <thead><tr><th>Start</th><th>End</th><th>Recovery %</th></tr></thead>
+      <tbody>
+        {% for t in tiers %}
+        <tr>
+          <td><input type="number" step="1" min="1" name="tier_start" value="{{ t.start }}" style="width:70px;"></td>
+          <td><input type="number" step="1" min="1" name="tier_end" value="{{ t.end }}" style="width:70px;"></td>
+          <td><input type="number" step="1" min="0" max="100" name="tier_pct" value="{{ (t.pct * 100)|round(1) }}" style="width:80px;"></td>
+        </tr>
+        {% endfor %}
+        {% for _ in range(3) %}
+        <tr>
+          <td><input type="number" step="1" min="1" name="tier_start" placeholder="—" style="width:70px;"></td>
+          <td><input type="number" step="1" min="1" name="tier_end" placeholder="—" style="width:70px;"></td>
+          <td><input type="number" step="1" min="0" max="100" name="tier_pct" placeholder="—" style="width:80px;"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="form-actions"><button type="submit">Apply Money Management Settings</button></div>
 </form>
 
 <h2 class="section">Backup &amp; Restore</h2>

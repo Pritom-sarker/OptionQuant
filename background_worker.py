@@ -28,6 +28,13 @@ log = logging.getLogger("background_worker")
 
 _last_tick_start: dict = {}   # loop name -> start ts of its previous tick, module-local (no lock needed, one writer per key)
 
+# Diagnostic only (see the n+1 pre-positioning gap investigation) — tracks
+# which forming window we've already logged a first-raw-pattern-match for, so
+# _tick_tab1_early logs that moment exactly once per window instead of every
+# tick the match continues to hold. Answers "how early could the pattern have
+# been caught" independent of early_entry_lead_sec's own gate.
+_early_diag: dict = {"window": None}
+
 
 def _record_tick(name: str, tick_start: float, tick_duration: float, interval: float) -> None:
     """
@@ -251,6 +258,16 @@ def _tick_tab1_early() -> None:
     ev = se.evaluate_patterns(bdf, settings["patterns"], settings["atr_mult"])
     row = se.build_signal_table(bdf, ev["per_pattern"], ev["combined_dir"], ev["combined_mode"],
                                  ev["combined_act_ok"], last_n=1)[0]
+
+    # Diagnostic only — logs the instant the raw pattern first matches on the
+    # still-forming candle, regardless of whether early_entry_lead_sec's
+    # window is open yet. Lets us tell "pattern genuinely doesn't confirm
+    # until near close" apart from "confirms early but the gate/feed is
+    # eating the lead time" without changing any staging behavior.
+    if row["predicted_next"] in ("GREEN", "RED") and _early_diag["window"] != forming["time"]:
+        _early_diag["window"] = forming["time"]
+        log.info("[Tab1] DIAG forming-candle pattern FIRST MATCHED %.0fs before close (window=%s, predicted=%s)",
+                  seconds_to_close, time.strftime("%H:%M:%S", time.localtime(forming["time"])), row["predicted_next"])
 
     with state.lock:
         state.tab1_forming_breakdown = {

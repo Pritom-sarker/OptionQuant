@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Live Trade{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">Live Trade</h1>
+    <p class="caption">The current (or most recent) trade only — signal time, order-placed time, latency, stake, and the money-management pool/tax numbers behind it.</p>
+  </div>
+  <span class="live-status" id="live-status-live_trade"><span class="live-dot" id="live-dot-live_trade"></span><span id="live-text-live_trade">LIVE</span> — <span id="live-updated-live_trade">last update: —</span></span>
+</div>
+
+<div id="live_trade-live">
+  {% include "partials/live_trade_live.html" %}
+</div>
+
+<script>
+  startPolling("/api/live_trade/live", "live_trade-live", 1000, "live_trade");
+</script>
+{% endblock %}

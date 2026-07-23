@@ -10,6 +10,13 @@ Recreates the exact logic of btc_polymarket_signal_tester.pine.
 # (which trades 0-1 and reflects market odds, not the underlying asset).
 BINANCE_KLINES_URL   = "https://api.binance.com/api/v3/klines"
 BINANCE_SYMBOL       = "BTCUSDT"
+# binance.com geo-blocks most US-based cloud/datacenter IP ranges (Railway's
+# egress included) for regulatory reasons; binance.us is the separate
+# US-compliant entity and does not — used as a same-shape, same-latency
+# fallback specifically for the still-forming candle, where Coinbase's feed
+# lags too much to substitute (see fetch_forming_btcusd_candle's docstring).
+BINANCE_US_KLINES_URL = "https://api.binance.us/api/v3/klines"
+BINANCE_US_SYMBOL    = "BTCUSD"
 COINBASE_CANDLES_URL = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
 CANDLE_TIMEFRAME_MIN = 5    # 5-minute candles
 NUM_CANDLES_TARGET   = 100

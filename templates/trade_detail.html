@@ -5,9 +5,9 @@
 {% if not found %}
 <h1 class="page-title">Trade not found</h1>
 <p class="caption">No trade with that ID exists.</p>
-<a href="/tab5" class="back-link">&larr; Back to Trade History</a>
+<a href="/analytics" class="back-link">&larr; Back to Analytical Dashboard</a>
 {% else %}
-<a href="/tab5" class="back-link">&larr; Back to Trade History</a>
+<a href="/analytics" class="back-link">&larr; Back to Analytical Dashboard</a>
 <h1 class="page-title">{{ icon }} Trade #{{ row.id }} — {{ row.prediction }} — {{ row.status }}
   {% if return_pct is not none %}({{ row.final_result }}, {{ "%+.1f%%"|format(return_pct * 100) }}){% endif %}
 </h1>

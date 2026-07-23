@@ -60,3 +60,8 @@ def tab5_live(request: Request):
 @router.get("/tab6/live")
 def tab6_live(request: Request):
     return _render_live(request, "partials/tab6_live.html", vc.build_money_management_context)
+
+
+@router.get("/live_trade/live")
+def live_trade_live(request: Request):
+    return _render_live(request, "partials/live_trade_live.html", vc.build_live_trade_context)

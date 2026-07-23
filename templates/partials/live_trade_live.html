@@ -1,0 +1,63 @@
+{% import "partials/_macros.html" as m %}
+
+{% if not has_item %}
+<div class="callout idle">No trade yet. Waiting for a Prediction Engine signal and Order Book confirmation.</div>
+{% else %}
+{% if item.is_historical %}
+<p class="caption">No trade active right now — showing the most recent settled trade.</p>
+{% endif %}
+
+<h2 class="section">Trade</h2>
+<div class="metric-grid">
+  {{ m.metric("Signal Direction", item.signal_direction) }}
+  {% if item.selected_side %}{{ m.metric("Selected Side", item.selected_side) }}{% endif %}
+  {{ m.metric("Status", item.entry_status) }}
+  {{ m.metric("Stake", item.stake) }}
+</div>
+<div class="metric-grid">
+  {{ m.metric("Signal Time", item.signal_time_str) }}
+  {{ m.metric("Order Placed", item.entry_time_str) }}
+  {{ m.metric("Signal → Order Latency", item.latency_str) }}
+</div>
+<div class="metric-grid">
+  {{ m.metric("Entry Price", item.entry_price) }}
+  {{ m.metric("Current Price", item.current_price) }}
+  {% if item.profit_factor %}{{ m.metric("Profit Factor", item.profit_factor) }}{% endif %}
+  {% if item.unrealized_pnl %}{{ m.metric("Unrealized PnL", item.unrealized_pnl, value_class=("green" if item.unrealized_pnl.startswith("+") else "red")) }}{% endif %}
+</div>
+<p class="caption">{{ item.reason }} — <a href="{{ item.market_url }}" target="_blank" rel="noopener">🔗 View contract on Polymarket</a></p>
+
+<h2 class="section">Money Management</h2>
+<div class="metric-grid">
+  {{ m.metric("Cycle Order #", money.cycle_order_number) }}
+  {{ m.metric("Active Recovery Tier", money.active_recovery_tier) }}
+  {{ m.metric("Next Stake", money.next_stake) }}
+  {{ m.metric("From Permanent Pool (LP tax)", money.lp_tax) }}
+</div>
+<div class="metric-grid">
+  {{ m.metric("Temporary Cycle Loss", money.temporary_cycle_loss) }}
+  {{ m.metric("Permanent Loss Pool", money.permanent_loss_pool) }}
+  {{ m.metric("Win Pool", money.win_pool) }}
+</div>
+{% if money.halted %}
+<div class="callout" style="border-left-color: var(--red);">HALTED — {{ money.halt_reason }}</div>
+{% endif %}
+
+{% if item.orderbook_snap %}
+<h2 class="section">Order Book — {{ item.side_only }}</h2>
+<div class="chart-grid">
+  <div>
+    <p class="caption">Top 5 Bids</p>
+    <div class="table-scroll"><table class="data-table"><thead><tr><th>Price</th><th>Size</th></tr></thead><tbody>
+      {% for lv in item.orderbook_snap.top5_bids %}<tr><td>{{ lv.price }}</td><td>{{ lv.size }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+  <div>
+    <p class="caption">Top 5 Asks</p>
+    <div class="table-scroll"><table class="data-table"><thead><tr><th>Price</th><th>Size</th></tr></thead><tbody>
+      {% for lv in item.orderbook_snap.top5_asks %}<tr><td>{{ lv.price }}</td><td>{{ lv.size }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+</div>
+{% endif %}
+{% endif %}

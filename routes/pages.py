@@ -34,41 +34,41 @@ def tab2_page(request: Request):
     return templates.TemplateResponse(request, "tab2.html", ctx)
 
 
-@router.get("/tab3")
-def tab3_page(request: Request):
-    ctx = {"request": request, "active_tab": "tab3", **vc.build_tab3_context()}
-    return templates.TemplateResponse(request, "tab3.html", ctx)
+@router.get("/live-trade")
+def live_trade_page(request: Request):
+    ctx = {"request": request, "active_tab": "live_trade", **vc.build_live_trade_context()}
+    return templates.TemplateResponse(request, "live_trade.html", ctx)
 
 
-@router.get("/tab4")
-def tab4_page(request: Request):
-    ctx = {"request": request, "active_tab": "tab4", **vc.build_tab4_context()}
-    return templates.TemplateResponse(request, "tab4.html", ctx)
-
-
-@router.get("/tab5")
-def tab5_page(request: Request):
-    ctx = {"request": request, "active_tab": "tab5", **vc.build_tab5_context()}
-    return templates.TemplateResponse(request, "tab5.html", ctx)
+@router.get("/analytics")
+def analytics_page(request: Request):
+    ctx = {"request": request, "active_tab": "analytics",
+           **vc.build_tab5_context(), **vc.build_money_management_context()}
+    return templates.TemplateResponse(request, "analytics.html", ctx)
 
 
 @router.get("/tab5/trade/{trade_id}")
 def trade_detail_page(request: Request, trade_id: int):
-    ctx = {"request": request, "active_tab": "tab5", **vc.build_trade_detail_context(trade_id)}
+    ctx = {"request": request, "active_tab": "analytics", **vc.build_trade_detail_context(trade_id)}
     return templates.TemplateResponse(request, "trade_detail.html", ctx)
 
 
 @router.get("/tab5/skipped/{candidate_id}")
 def skipped_detail_page(request: Request, candidate_id: int):
-    ctx = {"request": request, "active_tab": "tab5", **vc.build_skipped_detail_context(candidate_id)}
+    ctx = {"request": request, "active_tab": "analytics", **vc.build_skipped_detail_context(candidate_id)}
     return templates.TemplateResponse(request, "skipped_detail.html", ctx)
 
 
+@router.get("/tab3")
+@router.get("/tab4")
+def _redirect_to_live_trade():
+    return RedirectResponse(url="/live-trade")
+
+
+@router.get("/tab5")
 @router.get("/tab6")
-def tab6_page(request: Request, tier_error: bool = False):
-    ctx = {"request": request, "active_tab": "tab6", "tier_save_error": tier_error,
-           **vc.build_money_management_context()}
-    return templates.TemplateResponse(request, "tab6.html", ctx)
+def _redirect_to_analytics():
+    return RedirectResponse(url="/analytics")
 
 
 @router.post("/settings/money_management")
@@ -112,17 +112,20 @@ async def settings_money_management(request: Request):
             state.mm_tiers = tiers
     save_settings()
     if tier_errors:
-        return RedirectResponse(url="/tab6?tier_error=1", status_code=303)
-    return RedirectResponse(url="/tab6", status_code=303)
+        return RedirectResponse(url="/settings?tier_error=1", status_code=303)
+    return RedirectResponse(url="/settings?saved=1", status_code=303)
 
 
 @router.get("/settings")
 def settings_page(request: Request, saved: bool = False, reset: bool = False,
-                   imported: bool = False, import_error: bool = False):
+                   imported: bool = False, import_error: bool = False, tier_error: bool = False):
     with state.lock:
         tab1 = dict(state.tab1_settings)
         tab3 = dict(state.tab3_settings)
+    mm_ctx = vc.build_money_management_context()   # provides settings/tiers/tier_errors for the MM form section
     ctx = {"request": request, "active_tab": "settings", "tab1": tab1, "tab3": tab3,
+           "settings": mm_ctx["settings"], "tiers": mm_ctx["tiers"], "tier_errors": mm_ctx["tier_errors"],
+           "tier_save_error": tier_error,
            "pattern_options": config.PATTERN_OPTIONS, "pattern_slugs": config.PATTERN_SLUGS,
            "saved": saved, "reset": reset, "imported": imported, "import_error": import_error,
            "engine_health": vc.build_engine_health_context()}
