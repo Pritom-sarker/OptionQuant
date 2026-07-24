@@ -20,6 +20,19 @@ def _fmt(v, nd=2):
     return round(v, nd) if v is not None and pd.notna(v) else "—"
 
 
+def _paginate(items: list, page: int, page_size: int = 10) -> dict:
+    """Slice a newest-first list into one page — used by the Analytical
+    Dashboard's trade tables so hundreds of rows never render at once."""
+    total = len(items)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * page_size
+    return {
+        "items": items[start:start + page_size], "page": page, "total_pages": total_pages,
+        "total": total, "has_prev": page > 1, "has_next": page < total_pages,
+    }
+
+
 def _latency_str(signal_time, entry_time) -> str:
     """How long after the signal fired the order was actually placed —
     the number the "which candle did this really enter" question always
@@ -526,7 +539,7 @@ def build_trade_report(row: dict) -> dict:
     }
 
 
-def build_tab5_context() -> dict:
+def build_tab5_context(page: int = 1) -> dict:
     """
     Just the summary table — each row links to its own /tab5/trade/{id} page
     (build_trade_detail_context) rather than eagerly building every trade's
@@ -538,6 +551,10 @@ def build_tab5_context() -> dict:
     chronologically alongside real trades, but stats are computed from
     all_trades alone — a skipped candidate never risked a stake, so it must
     never touch win rate/profit/PF numbers.
+
+    Paginated 10 rows at a time (page, 1-indexed) — with hundreds of trades
+    accumulating over time, rendering every row on every request doesn't
+    scale, and nobody reads past the first page or two anyway.
     """
     all_trades = trade_db.fetch_all_trades_with_signal_time()
     skipped = trade_db.fetch_skipped_late_candidates()
@@ -581,7 +598,8 @@ def build_tab5_context() -> dict:
             "return_pct": None,
         })
     rows.sort(key=lambda r: r["sort_ts"], reverse=True)
-    return {"has_trades": True, "stats": stats, "rows": rows}
+    pg = _paginate(rows, page)
+    return {"has_trades": True, "stats": stats, "rows": pg["items"], "pagination": pg}
 
 
 def _mm_order_note(row: dict) -> str:
@@ -628,7 +646,7 @@ def _mm_order_note(row: dict) -> str:
     return note
 
 
-def build_money_management_context() -> dict:
+def build_money_management_context(page: int = 1) -> dict:
     """
     Tab 6 — replays trade_db's real settled trades (oldest -> newest) through
     money_management.replay_tiered() using the currently-applied tiered mm
@@ -637,6 +655,12 @@ def build_money_management_context() -> dict:
     history every poll is cheap, and it guarantees the balance/live-status
     preview always reflects the latest settled trade plus whatever settings
     are currently applied.
+
+    The Money Trail / Trade Log tables (both drawn from the same trade_log)
+    are paginated together — page N shows the same 10 underlying trades in
+    both, just with different columns — while every *chart* below is built
+    from the full, unpaginated trade_log so a chart never silently truncates
+    history just because the table view is on page 3.
     """
     settings = dict(state.mm_settings)
     tiers = [dict(t) for t in state.mm_tiers]
@@ -649,14 +673,20 @@ def build_money_management_context() -> dict:
     sim_trades = mm.trades_from_db_rows(db_rows)
     result = mm.replay_tiered(sim_trades, settings, tiers)
     hourly = mm.hourly_balance_curve(result["trade_log"], settings["starting_balance"])
+    drawdown = mm.drawdown_curve(hourly)
+    daily_pnl = mm.daily_pnl_curve(result["trade_log"])
 
     summary = result["summary"]
     live_status = result["live_status"]
     trade_log = result["trade_log"]
+    projection = mm.project_future_balance(trade_log, summary["ending_balance"])
+
     # "loss basket" chart = total outstanding recovery debt (still-open cycle loss
     # plus whatever the permanent pool carries forward) after each replayed trade.
     curves = {
         "time": [row["time"] for row in trade_log],
+        "temporary_loss": [row["temporary_loss_after"] for row in trade_log],
+        "permanent_pool": [row["permanent_pool_after"] for row in trade_log],
         "loss_basket": [row["temporary_loss_after"] + row["permanent_pool_after"] for row in trade_log],
     }
     for row in trade_log:
@@ -677,11 +707,34 @@ def build_money_management_context() -> dict:
                                f"${live_status['temporary_cycle_loss']:.2f} of temporary loss at "
                                f"{live_status['active_recovery_tier']}, staking ${live_status['final_stake']:.2f}.")
 
+    pg = _paginate(list(reversed(trade_log)), page)
+
+    charts = {
+        "balance": {"time": [r["hour"] for r in hourly], "value": [round(r["balance"], 2) for r in hourly]},
+        "drawdown": {"time": [r["hour"] for r in drawdown], "value": [round(r["drawdown_pct"], 2) for r in drawdown]},
+        "loss_pool": {
+            "time": curves["time"],
+            "temporary": [round(v, 2) for v in curves["temporary_loss"]],
+            "permanent": [round(v, 2) for v in curves["permanent_pool"]],
+        },
+        "daily_pnl": {"day": [r["day"] for r in daily_pnl], "value": [round(r["net_pnl"], 2) for r in daily_pnl]},
+        "pool_snapshot": {
+            "permanent_loss_pool": round(live_status["permanent_loss_pool"], 2),
+            "win_pool": round(live_status["win_pool"], 2),
+        },
+        "projection": {
+            "current_balance": round(summary["ending_balance"], 2),
+            "daily_rate": round(projection["daily_rate"], 4),
+            "elapsed_days": round(projection["elapsed_days"], 1),
+            "horizons": [{"days": d, "balance": round(v, 2)} for d, v in projection["projections"].items()],
+        },
+    }
+
     return {
         "has_trades": True, "settings": settings, "tiers": tiers, "tier_errors": tier_errors,
         "summary": summary, "live_status": live_status, "current_state_note": current_state_note,
-        "hourly": hourly, "curves": curves,
-        "trade_log": list(reversed(trade_log))[:100],   # newest first for display, capped like Tab 5's recent list
+        "hourly": hourly, "curves": curves, "charts": charts,
+        "trade_log": pg["items"], "pagination": pg,
     }
 
 

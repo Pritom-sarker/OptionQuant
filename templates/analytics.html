@@ -1,29 +1,482 @@
 {% extends "base.html" %}
+{% import "partials/_macros.html" as m %}
 {% block title %}Analytical Dashboard{% endblock %}
 {% block content %}
+<style>
+  .g-card{ background: var(--surface); border:1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 18px; }
+  .g-card h3{ margin: 0 0 3px; font-size: 15px; }
+  .g-cap{ color: var(--text-faint); font-size: 12.5px; margin: 0 0 14px; }
+  .g-legend{ display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; color:var(--text-dim); margin-top:8px; }
+  .g-legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .g-legend i{ width:10px; height:10px; border-radius:2px; display:inline-block; flex:none; }
+  .g-wrap{ position: relative; width: 100%; }
+  .g-empty{ color: var(--text-faint); font-size: 13px; padding: 40px 0; text-align:center; }
+  .g-tooltip{
+    position:absolute; pointer-events:none; background:#000; color:#fff; font-size:12px; padding:7px 11px;
+    border-radius:7px; border:1px solid var(--border); opacity:0; transition: opacity .1s; white-space:nowrap; z-index:20;
+  }
+  .g-projection-row{ display:grid; grid-template-columns: repeat(3, 1fr); gap:14px; margin-top: 14px; }
+  @media (max-width: 760px){ .g-projection-row{ grid-template-columns: 1fr; } }
+  .g-proj-tile{ background: var(--surface-2); border:1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; text-align:center; }
+  .g-proj-tile .n{ font-size: 22px; font-weight: 800; }
+  .g-proj-tile .l{ color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin-top:3px; }
+
+  .pager{ display:flex; align-items:center; justify-content:center; gap: 10px; margin: 14px 0 4px; font-size: 13px; color: var(--text-dim); }
+  .pager a{ background: var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:6px 14px; color: var(--text); text-decoration:none; }
+  .pager a.disabled{ pointer-events:none; opacity: .35; }
+  .pager a:hover{ border-color: var(--accent-1); text-decoration:none; }
+</style>
+
 <div class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">Analytical Dashboard</h1>
-    <p class="caption">Full trade history, stats, and the money-management ledger/charts. For the current trade only, see Live Trade.</p>
+    <p class="caption">Balance, drawdown, and pool trends first — the full trade-by-trade history is below, 10 rows at a time. For the current trade only, see Live Trade.</p>
   </div>
-  <span class="live-status" id="live-status-analytics"><span class="live-dot" id="live-dot-analytics"></span><span id="live-text-analytics">LIVE</span> — charts refresh every 30s · <span id="live-updated-analytics">last update: —</span></span>
 </div>
 
-<h2 class="section">Trade History</h2>
-<div id="tab5-live">
-  {% include "partials/tab5_live.html" %}
+{% if not money.has_trades and not trade.has_trades %}
+<div class="callout idle">No settled trades yet — this page fills in once at least one trade closes.</div>
+{% endif %}
+
+{% if money.has_trades %}
+{% set profit = money.summary.ending_balance >= money.summary.starting_balance %}
+<div class="balance-banner"
+     style="background: var(--{{ 'green-bg' if profit else 'red-bg' }});
+            border-color: var(--{{ 'green' if profit else 'red' }});">
+  <div>
+    <div class="balance-label">Current Balance</div>
+    <div class="balance-value" style="color: var(--{{ 'green' if profit else 'red' }});">${{ "%.2f"|format(money.summary.ending_balance) }}</div>
+  </div>
+  <div class="balance-delta" style="color: var(--{{ 'green' if profit else 'red' }});">
+    {{ "%+.2f"|format(money.summary.net_pnl) }} ({{ "%+.2f"|format(money.summary.roi_pct) }}%) since ${{ "%.2f"|format(money.summary.starting_balance) }} start
+  </div>
 </div>
 
-<hr class="divider" style="margin: 32px 0; border-top-width: 2px;">
+{% if money.live_status.halted %}
+<div class="callout" style="border-left-color: var(--red);">
+  <strong>Money Management is HALTED — no new trades will be sized until this is resolved.</strong><br>
+  {{ money.live_status.halt_reason }}
+</div>
+{% endif %}
 
-<h2 class="section">Money Management</h2>
-<div id="tab6-live">
-  {% include "partials/tab6_live.html" %}
+<div class="metric-grid">
+  {{ m.metric("ROI %", "%.2f%%"|format(money.summary.roi_pct), value_class=("green" if profit else "red")) }}
+  {{ m.metric("Win Rate", "%.1f%%"|format(money.summary.win_rate)) }}
+  {{ m.metric("Total Trades", money.summary.total_trades) }}
+  {{ m.metric("Max Consec. Losses", money.summary.max_consecutive_losses) }}
+  {{ m.metric("Cycle Timeouts", money.summary.cycle_timeouts) }}
+  {{ m.metric("Temporary Cycle Loss", "$%.2f"|format(money.summary.final_temporary_cycle_loss), value_class="red") }}
+  {{ m.metric("Permanent Loss Pool", "$%.2f"|format(money.summary.final_permanent_loss_pool), value_class="red") }}
+  {{ m.metric("Win Pool", "$%.2f"|format(money.summary.final_win_pool), value_class="green") }}
 </div>
 
+<h2 class="section">Next Order Preview</h2>
+<div class="metric-grid">
+  {{ m.metric("Cycle Order #", money.live_status.cycle_order_number ~ " / " ~ money.live_status.maximum_cycle_orders) }}
+  {{ m.metric("Active Recovery Tier", money.live_status.active_recovery_tier or "—") }}
+  {{ m.metric("Next Stake", ("$%.2f"|format(money.live_status.final_stake) if money.live_status.final_stake is not none else "HALTED"), value_class=("red" if money.live_status.final_stake is none else None)) }}
+  {{ m.metric("Consecutive Losses", money.live_status.consecutive_losses) }}
+</div>
+<div class="callout{{ ' idle' if money.live_status.cycle_order_number == 1 and not money.live_status.halted else '' }}"
+     {{ 'style="border-left-color: var(--red);"'|safe if money.live_status.halted else '' }}>{{ money.current_state_note }}</div>
+
+<h2 class="section">Performance Graphs</h2>
+
+<div class="g-card">
+  <h3>Balance Over Time</h3>
+  <p class="g-cap">Hourly balance, carried forward between trades — the up/down story of every settled trade combined.</p>
+  <div class="g-wrap" id="chart-balance" style="height:320px;"><div class="g-tooltip" id="tip-balance"></div></div>
+</div>
+
+<div class="g-card">
+  <h3>Drawdown</h3>
+  <p class="g-cap">How far the balance currently sits below its own all-time high — 0% at a new peak, negative during a losing stretch.</p>
+  <div class="g-wrap" id="chart-drawdown" style="height:260px;"><div class="g-tooltip" id="tip-drawdown"></div></div>
+</div>
+
+<div class="g-card">
+  <h3>Daily Profit / Loss</h3>
+  <p class="g-cap">Net P/L summed per day — the monthly breakdown at a glance, one bar per day.</p>
+  <div class="g-wrap" id="chart-daily" style="height:260px;"><div class="g-tooltip" id="tip-daily"></div></div>
+</div>
+
+<div class="g-card">
+  <h3>Loss Pool Over Time</h3>
+  <p class="g-cap">Temporary Cycle Loss (resets every cycle) vs. the Permanent Loss Pool (carried forward until paid down).</p>
+  <div class="g-wrap" id="chart-losspool" style="height:300px;"><div class="g-tooltip" id="tip-losspool"></div></div>
+  <div class="g-legend">
+    <span><i style="background:var(--red)"></i>Temporary Cycle Loss</span>
+    <span><i style="background:var(--amber)"></i>Permanent Loss Pool</span>
+  </div>
+</div>
+
+<div class="g-card">
+  <h3>Permanent Loss Pool vs. Win Pool — right now</h3>
+  <p class="g-cap">A snapshot, not a trend — how much is currently owed vs. how much has been set aside from wins.</p>
+  <div class="g-wrap" id="chart-poolbar" style="height:160px;"><div class="g-tooltip" id="tip-poolbar"></div></div>
+</div>
+
+<div class="g-card">
+  <h3>Future Projection</h3>
+  <p class="g-cap">Extends the balance curve forward using the average daily rate observed so far (dashed) — a straight-line estimate, not a guarantee.</p>
+  <div class="g-wrap" id="chart-projection" style="height:300px;"><div class="g-tooltip" id="tip-projection"></div></div>
+  <div class="g-projection-row">
+    {% for h in money.charts.projection.horizons %}
+    <div class="g-proj-tile">
+      <div class="n" style="color: {{ 'var(--green)' if h.balance >= money.charts.projection.current_balance else 'var(--red)' }};">${{ "%.2f"|format(h.balance) }}</div>
+      <div class="l">Projected in {{ h.days }} days</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<h2 class="section">Trade Section</h2>
+
+{% if trade.has_trades %}
+<div class="metric-grid">
+  {{ m.metric("Total Trades", trade.stats.total) }}
+  {{ m.metric("Wins", trade.stats.wins, value_class="green") }}
+  {{ m.metric("Losses", trade.stats.losses, value_class="red") }}
+  {{ m.metric("Win Rate", "%.1f%%"|format(trade.stats.win_rate)) }}
+  {{ m.metric("Skipped (Late)", trade.stats.skipped_late) }}
+</div>
+<div class="metric-grid">
+  {{ m.metric("Total Profit", "%.4f"|format(trade.stats.total_profit), value_class=("green" if trade.stats.total_profit >= 0 else "red")) }}
+  {{ m.metric("Avg Profit", "%.4f"|format(trade.stats.avg_profit)) }}
+  {{ m.metric("Avg Entry Price", (trade.stats.avg_entry|round(3)) if trade.stats.avg_entry is not none else "—") }}
+  {{ m.metric("Avg Profit Factor", (trade.stats.avg_pf|round(2)) if trade.stats.avg_pf is not none else "—") }}
+  {{ m.metric("Current Losing Streak", trade.stats.current_losing_streak) }}
+  {{ m.metric("Longest Losing Streak", trade.stats.longest_losing_streak) }}
+</div>
+
+<h3 class="section" style="font-size:16px;" id="trade-history">Trade History</h3>
+<p class="caption">Page {{ trade.pagination.page }} of {{ trade.pagination.total_pages }} — {{ trade.pagination.total }} trades total.</p>
+<div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th></th><th>Candle</th><th>Signal Time</th><th>Order Placed</th><th>Latency</th><th>Side</th>
+    <th>Entry Type</th><th>Entry Price</th><th>Exit Price</th><th>Profit</th><th>Result</th><th>Status</th><th>Market</th><th>Details</th></tr></thead>
+  <tbody>
+    {% for r in trade.rows %}
+    <tr>
+      <td>{{ r.icon }}</td>
+      <td>{{ r.candle_str }}</td>
+      <td>{{ r.signal_time_str }}</td>
+      <td>{{ r.entry_time_str }}</td>
+      <td>{{ r.latency_str }}</td>
+      <td>{{ r.side }}</td>
+      <td>{{ r.entry_mode }}</td>
+      <td>{{ r.entry_price }}</td>
+      <td>{{ r.exit_price }}</td>
+      <td style="{{ 'color: var(--green);' if r.pnl is number and r.pnl >= 0 else ('color: var(--red);' if r.pnl is number else '') }}">{{ r.pnl }}</td>
+      <td><span class="badge {{ 'green' if r.result=='WIN' else ('red' if r.result=='LOSS' else 'neutral') }}">{{ r.result }}</span></td>
+      <td>{{ r.status }}</td>
+      <td><a href="{{ r.market_url }}" target="_blank" rel="noopener">link</a></td>
+      <td>{% if r.kind == "trade" %}<a href="/tab5/trade/{{ r.id }}">Details</a>{% else %}<a href="/tab5/skipped/{{ r.id }}">Details</a>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<div class="pager">
+  <a href="?trade_page={{ trade.pagination.page - 1 }}&money_page={{ money.pagination.page if money.has_trades else 1 }}#trade-history" class="{{ 'disabled' if not trade.pagination.has_prev }}">&larr; Prev</a>
+  <span>Page {{ trade.pagination.page }} / {{ trade.pagination.total_pages }}</span>
+  <a href="?trade_page={{ trade.pagination.page + 1 }}&money_page={{ money.pagination.page if money.has_trades else 1 }}#trade-history" class="{{ 'disabled' if not trade.pagination.has_next }}">Next &rarr;</a>
+</div>
+{% else %}
+<div class="callout idle">No trades yet.</div>
+{% endif %}
+
+{% if money.has_trades %}
+<h3 class="section" style="font-size:16px;" id="money-trail">Money Trail — Order by Order</h3>
+<p class="caption">Page {{ money.pagination.page }} of {{ money.pagination.total_pages }} — {{ money.pagination.total }} orders total. When the signal fired, when the order was actually placed, what it was made of, and a plain-English note on why.</p>
+<div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th>Signal Time</th><th>Order Time</th><th>Side</th><th>Cycle / Order #</th><th>Result</th>
+    <th>Base Stake</th><th>From Perm. Pool</th><th>Total Staked</th><th>To Win Pool</th><th>Note</th></tr></thead>
+  <tbody>
+    {% for t in money.trade_log %}
+    <tr>
+      <td>{{ t.signal_time_str }}</td>
+      <td>{{ t.time_str }}</td>
+      <td>{{ t.direction or "—" }}</td>
+      <td>#{{ t.cycle_id }} / {{ t.order_number_in_cycle }}</td>
+      <td><span class="badge {{ 'green' if t.result=='WIN' else ('red' if t.result=='LOSS' else 'neutral') }}">{{ t.result }}</span></td>
+      <td>${{ "%.2f"|format(t.base_or_cycle_stake) }}</td>
+      <td>${{ "%.2f"|format(t.pool_recovery_stake) }}</td>
+      <td>${{ "%.2f"|format(t.final_stake) }}</td>
+      <td>${{ "%.2f"|format(t.win_pool_contribution) }}</td>
+      <td style="min-width: 320px; white-space: normal;">{{ t.note }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h3 class="section" style="font-size:16px;">Trade Log</h3>
+<div class="table-scroll">
+<table class="data-table">
+  <thead><tr><th>Time</th><th>Side</th><th>Cycle</th><th>Order #</th><th>Result</th><th>Tier</th>
+    <th>Stake</th><th>Payout</th><th>Net P/L</th><th>Balance After</th><th>Temp Loss After</th><th>Perm Pool After</th></tr></thead>
+  <tbody>
+    {% for t in money.trade_log %}
+    <tr>
+      <td>{{ t.time_str }}</td>
+      <td>{{ t.direction or "—" }}</td>
+      <td>{{ t.cycle_id }}</td>
+      <td>{{ t.order_number_in_cycle }}</td>
+      <td><span class="badge {{ 'green' if t.result=='WIN' else ('red' if t.result=='LOSS' else 'neutral') }}">{{ t.result }}</span></td>
+      <td>{{ t.recovery_tier }}</td>
+      <td>${{ "%.2f"|format(t.final_stake) }}</td>
+      <td>${{ "%.2f"|format(t.actual_payout) }}</td>
+      <td style="color: var(--{{ 'green' if t.net_profit_or_loss >= 0 else 'red' }});">{{ "%+.2f"|format(t.net_profit_or_loss) }}</td>
+      <td>${{ "%.2f"|format(t.balance_after) }}</td>
+      <td>${{ "%.2f"|format(t.temporary_loss_after) }}</td>
+      <td>${{ "%.2f"|format(t.permanent_pool_after) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<div class="pager">
+  <a href="?money_page={{ money.pagination.page - 1 }}&trade_page={{ trade.pagination.page if trade.has_trades else 1 }}#money-trail" class="{{ 'disabled' if not money.pagination.has_prev }}">&larr; Prev</a>
+  <span>Page {{ money.pagination.page }} / {{ money.pagination.total_pages }}</span>
+  <a href="?money_page={{ money.pagination.page + 1 }}&trade_page={{ trade.pagination.page if trade.has_trades else 1 }}#money-trail" class="{{ 'disabled' if not money.pagination.has_next }}">Next &rarr;</a>
+</div>
+{% endif %}
+
+{% if money.has_trades %}
 <script>
-  startPolling("/api/tab5/live", "tab5-live", 2000, "analytics");
-  startPolling("/api/tab6/live", "tab6-live", 2000);
-  startImageRefresh(30000);
+(function(){
+  const NS = "http://www.w3.org/2000/svg";
+  const CHARTS = {{ money.charts | tojson }};
+  function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  const C = {
+    accent1: cssVar('--accent-1') || '#4f7cff', accent2: cssVar('--accent-2') || '#a855f7',
+    green: cssVar('--green') || '#22c55e', red: cssVar('--red') || '#ef4444', amber: cssVar('--amber') || '#f59e0b',
+    grid: cssVar('--border') || '#262b3a', dim: cssVar('--text-dim') || '#9aa1b5',
+    faint: cssVar('--text-faint') || '#666d82', ink: cssVar('--text') || '#fff',
+  };
+  function el(tag, attrs){ const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+  function fmtDate(ts){ const d = new Date(ts*1000); return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
+  function fmtDateTime(ts){ const d = new Date(ts*1000); return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}); }
+
+  function emptyState(containerId, msg){
+    const wrap = document.getElementById(containerId);
+    wrap.innerHTML = '<div class="g-empty">' + msg + '</div>';
+  }
+
+  // ---- Multi-series line/area chart with hover crosshair ----
+  function lineChart(containerId, tipId, series, opts){
+    opts = opts || {};
+    const wrap = document.getElementById(containerId);
+    const tip = document.getElementById(tipId);
+    const allX = series.flatMap(s=>s.points.map(p=>p.x));
+    const allY = series.flatMap(s=>s.points.map(p=>p.y));
+    if (!allX.length){ emptyState(containerId, "Not enough data yet."); return; }
+
+    const w = 1200, h = opts.height || 320, padL = 64, padR = 20, padT = 16, padB = 30;
+    let minX = Math.min(...allX), maxX = Math.max(...allX);
+    let minY = Math.min(...allY, opts.includeZero ? 0 : allY[0]), maxY = Math.max(...allY, opts.includeZero ? 0 : allY[0]);
+    if (minX === maxX) maxX = minX + 1;
+    if (minY === maxY){ minY -= 1; maxY += 1; }
+    const yPad = (maxY - minY) * 0.08;
+    minY -= yPad; maxY += yPad;
+
+    const xScale = x => padL + (x - minX) / (maxX - minX) * (w - padL - padR);
+    const yScale = y => (h - padB) - (y - minY) / (maxY - minY) * (h - padT - padB);
+
+    const svg = el("svg", {viewBox:`0 0 ${w} ${h}`, width:"100%", height:h, preserveAspectRatio:"none", style:"display:block;"});
+
+    // gridlines + y labels (4 bands)
+    const bands = 4;
+    for (let i=0;i<=bands;i++){
+      const gy = padT + (h-padT-padB) * i/bands;
+      svg.appendChild(el("line", {x1:padL, x2:w-padR, y1:gy, y2:gy, stroke:C.grid, "stroke-width":1}));
+      const val = maxY - (maxY-minY)*i/bands;
+      const t = el("text", {x:padL-10, y:gy+4, fill:C.faint, "font-size":11, "text-anchor":"end"});
+      t.textContent = (opts.yFmt ? opts.yFmt(val) : val.toFixed(1));
+      svg.appendChild(t);
+    }
+    if (opts.includeZero && minY < 0 && maxY > 0){
+      const zy = yScale(0);
+      svg.appendChild(el("line", {x1:padL, x2:w-padR, y1:zy, y2:zy, stroke:C.faint, "stroke-width":1, "stroke-dasharray":"4 3"}));
+    }
+
+    series.forEach(s=>{
+      const solidPts = s.points.filter((p,i)=> s.dashedFromIndex == null || i <= s.dashedFromIndex);
+      const dashedPts = s.dashedFromIndex != null ? s.points.slice(s.dashedFromIndex) : [];
+      function pathFor(pts){ return pts.map((p,i)=> (i===0?"M":"L") + xScale(p.x) + " " + yScale(p.y)).join(" "); }
+      if (opts.area && solidPts.length){
+        const base = yScale(opts.includeZero ? 0 : minY);
+        const areaD = pathFor(solidPts) + ` L ${xScale(solidPts[solidPts.length-1].x)} ${base} L ${xScale(solidPts[0].x)} ${base} Z`;
+        const areaPath = el("path", {d: areaD, fill: s.color, opacity: 0.14, stroke:"none"});
+        svg.appendChild(areaPath);
+      }
+      if (solidPts.length > 1){
+        svg.appendChild(el("path", {d: pathFor(solidPts), fill:"none", stroke: s.color, "stroke-width":2.4, "stroke-linejoin":"round", "stroke-linecap":"round"}));
+      }
+      if (dashedPts.length > 1){
+        svg.appendChild(el("path", {d: pathFor(dashedPts), fill:"none", stroke: s.color, "stroke-width":2.4, "stroke-dasharray":"6 5", "stroke-linejoin":"round", "stroke-linecap":"round"}));
+      }
+    });
+
+    // hover crosshair
+    const crosshair = el("line", {x1:0,x2:0,y1:padT,y2:h-padB, stroke:C.dim, "stroke-width":1, opacity:0});
+    svg.appendChild(crosshair);
+    const dots = series.map(s=>{ const d = el("circle", {r:4, fill:s.color, opacity:0}); svg.appendChild(d); return d; });
+
+    const overlay = el("rect", {x:padL, y:padT, width: w-padL-padR, height: h-padT-padB, fill:"transparent", style:"cursor:crosshair;"});
+    overlay.addEventListener("mousemove", (e)=>{
+      const rect = wrap.getBoundingClientRect();
+      const scaleX = rect.width / w;
+      const mx = (e.clientX - rect.left) / scaleX;
+      const dataX = minX + (mx - padL) / (w-padL-padR) * (maxX-minX);
+      let lines = [];
+      series.forEach((s,i)=>{
+        if (!s.points.length) return;
+        let nearest = s.points[0], best = Infinity;
+        s.points.forEach(p=>{ const d = Math.abs(p.x-dataX); if (d<best){best=d; nearest=p;} });
+        const cx = xScale(nearest.x), cy = yScale(nearest.y);
+        dots[i].setAttribute("cx", cx); dots[i].setAttribute("cy", cy); dots[i].setAttribute("opacity", 1);
+        crosshair.setAttribute("x1", cx); crosshair.setAttribute("x2", cx); crosshair.setAttribute("opacity", 1);
+        lines.push(`<span style="color:${s.color}">&#9679;</span> ${s.name}: <b>${opts.tipFmt ? opts.tipFmt(nearest.y) : nearest.y}</b>`);
+        if (i===0){ tip.dataset.x = nearest.x; }
+      });
+      tip.innerHTML = (opts.xFmt ? opts.xFmt(Number(tip.dataset.x)) : tip.dataset.x) + "<br>" + lines.join("<br>");
+      tip.style.opacity = 1;
+      tip.style.left = (e.clientX - rect.left + 14) + "px";
+      tip.style.top = (e.clientY - rect.top - 12) + "px";
+    });
+    overlay.addEventListener("mouseleave", ()=>{
+      tip.style.opacity = 0; crosshair.setAttribute("opacity", 0);
+      dots.forEach(d=>d.setAttribute("opacity", 0));
+    });
+    svg.appendChild(overlay);
+    wrap.innerHTML = "";
+    wrap.appendChild(svg);
+  }
+
+  // ---- Bar chart (positive/negative colored) ----
+  function barChart(containerId, tipId, points, opts){
+    opts = opts || {};
+    const wrap = document.getElementById(containerId);
+    const tip = document.getElementById(tipId);
+    if (!points.length){ emptyState(containerId, "Not enough data yet."); return; }
+    const w = 1200, h = opts.height || 260, padL = 64, padR = 20, padT = 16, padB = 30;
+    const ys = points.map(p=>p.y);
+    let minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0);
+    if (minY === maxY){ minY -= 1; maxY += 1; }
+    const yPad = (maxY-minY)*0.1; minY -= yPad; maxY += yPad;
+    const yScale = y => (h-padB) - (y-minY)/(maxY-minY) * (h-padT-padB);
+    const zeroY = yScale(0);
+    const bw = (w - padL - padR) / points.length;
+
+    const svg = el("svg", {viewBox:`0 0 ${w} ${h}`, width:"100%", height:h, preserveAspectRatio:"none"});
+    const bands = 4;
+    for (let i=0;i<=bands;i++){
+      const gy = padT + (h-padT-padB)*i/bands;
+      svg.appendChild(el("line", {x1:padL, x2:w-padR, y1:gy, y2:gy, stroke:C.grid, "stroke-width":1}));
+      const val = maxY - (maxY-minY)*i/bands;
+      const t = el("text", {x:padL-10, y:gy+4, fill:C.faint, "font-size":11, "text-anchor":"end"});
+      t.textContent = (opts.yFmt ? opts.yFmt(val) : val.toFixed(1)); svg.appendChild(t);
+    }
+    svg.appendChild(el("line", {x1:padL, x2:w-padR, y1:zeroY, y2:zeroY, stroke:C.faint, "stroke-width":1}));
+
+    points.forEach((p,i)=>{
+      const x = padL + i*bw + bw*0.15, bwid = bw*0.7;
+      const y0 = Math.min(zeroY, yScale(p.y)), y1 = Math.max(zeroY, yScale(p.y));
+      const rect = el("rect", {x, y:y0, width:bwid, height: Math.max(y1-y0,1), rx:2, fill: p.y>=0? C.green : C.red, style:"cursor:pointer;"});
+      rect.addEventListener("mousemove",(e)=>{
+        const rectB = wrap.getBoundingClientRect();
+        tip.innerHTML = (opts.xFmt? opts.xFmt(p.x): p.x) + "<br><b>" + (opts.tipFmt? opts.tipFmt(p.y): p.y) + "</b>";
+        tip.style.opacity = 1; tip.style.left = (e.clientX-rectB.left+14)+"px"; tip.style.top=(e.clientY-rectB.top-12)+"px";
+      });
+      rect.addEventListener("mouseleave", ()=> tip.style.opacity = 0);
+      svg.appendChild(rect);
+    });
+    wrap.innerHTML = ""; wrap.appendChild(svg);
+  }
+
+  // ---- Simple 2-bar horizontal comparison ----
+  function compareBars(containerId, tipId, bars, opts){
+    opts = opts || {};
+    const wrap = document.getElementById(containerId);
+    const tip = document.getElementById(tipId);
+    const w = 1200, h = opts.height || 160, padL = 170, padR = 90, rowH = h/bars.length;
+    const maxV = Math.max(...bars.map(b=>b.value), 0.01);
+    const svg = el("svg", {viewBox:`0 0 ${w} ${h}`, width:"100%", height:h, preserveAspectRatio:"none"});
+    bars.forEach((b,i)=>{
+      const y = i*rowH + rowH*0.28, bh = rowH*0.44;
+      const bw = (b.value/maxV) * (w-padL-padR);
+      const label = el("text", {x:padL-12, y:y+bh/2+4, fill:C.dim, "font-size":13, "text-anchor":"end"}); label.textContent = b.label; svg.appendChild(label);
+      const rect = el("rect", {x:padL, y, width:Math.max(bw,2), height:bh, rx:6, fill:b.color, style:"cursor:pointer;"});
+      rect.addEventListener("mousemove",(e)=>{
+        const rectB = wrap.getBoundingClientRect();
+        tip.innerHTML = `<b>${b.label}</b><br>$${b.value.toFixed(2)}`;
+        tip.style.opacity=1; tip.style.left=(e.clientX-rectB.left+14)+"px"; tip.style.top=(e.clientY-rectB.top-12)+"px";
+      });
+      rect.addEventListener("mouseleave", ()=> tip.style.opacity=0);
+      svg.appendChild(rect);
+      const val = el("text", {x:padL+Math.max(bw,2)+10, y:y+bh/2+4, fill:C.ink, "font-size":13, "font-weight":700});
+      val.textContent = "$"+b.value.toFixed(2); svg.appendChild(val);
+    });
+    wrap.innerHTML=""; wrap.appendChild(svg);
+  }
+
+  // Balance
+  if (CHARTS.balance.time.length){
+    lineChart("chart-balance", "tip-balance",
+      [{name:"Balance", color:C.accent1, points: CHARTS.balance.time.map((t,i)=>({x:t,y:CHARTS.balance.value[i]}))}],
+      {height:320, area:true, xFmt: fmtDateTime, yFmt: v=>"$"+v.toFixed(0), tipFmt: v=>"$"+v.toFixed(2)});
+  } else emptyState("chart-balance", "Not enough data yet.");
+
+  // Drawdown
+  if (CHARTS.drawdown.time.length){
+    lineChart("chart-drawdown", "tip-drawdown",
+      [{name:"Drawdown", color:C.red, points: CHARTS.drawdown.time.map((t,i)=>({x:t,y:CHARTS.drawdown.value[i]}))}],
+      {height:260, area:true, includeZero:true, xFmt: fmtDateTime, yFmt: v=>v.toFixed(0)+"%", tipFmt: v=>v.toFixed(2)+"%"});
+  } else emptyState("chart-drawdown", "Not enough data yet.");
+
+  // Daily PnL
+  if (CHARTS.daily_pnl.day.length){
+    barChart("chart-daily", "tip-daily",
+      CHARTS.daily_pnl.day.map((d,i)=>({x:d, y:CHARTS.daily_pnl.value[i]})),
+      {height:260, xFmt: fmtDate, yFmt: v=>"$"+v.toFixed(0), tipFmt: v=>"$"+v.toFixed(2)});
+  } else emptyState("chart-daily", "Not enough data yet.");
+
+  // Loss pool (two series)
+  if (CHARTS.loss_pool.time.length){
+    lineChart("chart-losspool", "tip-losspool",
+      [
+        {name:"Temporary Cycle Loss", color:C.red, points: CHARTS.loss_pool.time.map((t,i)=>({x:t,y:CHARTS.loss_pool.temporary[i]}))},
+        {name:"Permanent Loss Pool", color:C.amber, points: CHARTS.loss_pool.time.map((t,i)=>({x:t,y:CHARTS.loss_pool.permanent[i]}))},
+      ],
+      {height:300, includeZero:true, xFmt: fmtDateTime, yFmt: v=>"$"+v.toFixed(0), tipFmt: v=>"$"+v.toFixed(2)});
+  } else emptyState("chart-losspool", "Not enough data yet.");
+
+  // Pool snapshot bar
+  compareBars("chart-poolbar", "tip-poolbar", [
+    {label:"Permanent Loss Pool", value: CHARTS.pool_snapshot.permanent_loss_pool, color: C.amber},
+    {label:"Win Pool", value: CHARTS.pool_snapshot.win_pool, color: C.green},
+  ], {height:140});
+
+  // Future projection — historical balance + dashed projection tail
+  if (CHARTS.balance.time.length){
+    const histPoints = CHARTS.balance.time.map((t,i)=>({x:t, y:CHARTS.balance.value[i]}));
+    const lastT = histPoints[histPoints.length-1].x;
+    const daySec = 86400;
+    const projPoints = [histPoints[histPoints.length-1]].concat(
+      CHARTS.projection.horizons.map(h => ({x: lastT + h.days*daySec, y: h.balance}))
+    );
+    lineChart("chart-projection", "tip-projection",
+      [
+        {name:"Balance (actual)", color:C.accent1, points: histPoints},
+        {name:"Projected", color:C.accent2, points: projPoints, dashedFromIndex: 0},
+      ],
+      {height:300, area:false, xFmt: fmtDateTime, yFmt: v=>"$"+v.toFixed(0), tipFmt: v=>"$"+v.toFixed(2)});
+  } else emptyState("chart-projection", "Not enough data yet.");
+})();
 </script>
+{% endif %}
 {% endblock %}

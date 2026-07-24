@@ -363,6 +363,62 @@ def hourly_balance_curve(trade_log: list[dict], starting_balance: float) -> list
     return out
 
 
+def drawdown_curve(hourly: list[dict]) -> list[dict]:
+    """
+    Percent drawdown from the running peak balance at each hourly bucket —
+    "how far below its own high-water mark the balance currently is". 0% at
+    a new peak, negative otherwise. Takes hourly_balance_curve()'s own output
+    so the two charts always share the same time axis/bucketing.
+    """
+    out = []
+    peak = None
+    for row in hourly:
+        bal = row["balance"]
+        peak = bal if peak is None else max(peak, bal)
+        dd_pct = ((bal - peak) / peak * 100.0) if peak else 0.0
+        out.append({"hour": row["hour"], "drawdown_pct": dd_pct})
+    return out
+
+
+def daily_pnl_curve(trade_log: list[dict]) -> list[dict]:
+    """
+    Net P/L summed per calendar day (UTC-aligned, matching trade_log's own
+    unix timestamps), oldest first. trade_log is already chronological so
+    buckets come out in day order without needing a separate sort.
+    """
+    buckets: dict[int, float] = {}
+    order: list[int] = []
+    for row in trade_log:
+        day = int(row["time"] // 86400 * 86400)
+        if day not in buckets:
+            buckets[day] = 0.0
+            order.append(day)
+        buckets[day] += row["net_profit_or_loss"]
+    return [{"day": d, "net_pnl": buckets[d]} for d in order]
+
+
+def project_future_balance(trade_log: list[dict], current_balance: float,
+                            horizons_days: tuple = (7, 14, 30)) -> dict:
+    """
+    Simple linear projection: the average daily P/L rate observed since the
+    first settled trade, extended forward. Not a forecast of any individual
+    future trade — just "if the average pace so far holds, where does that
+    put the balance N days from now". Needs at least 2 trades to have any
+    elapsed time to measure a rate over; returns a flat (no-growth)
+    projection otherwise rather than dividing by a near-zero time span.
+    """
+    if len(trade_log) < 2:
+        return {"daily_rate": 0.0, "elapsed_days": 0.0,
+                "projections": {d: current_balance for d in horizons_days}}
+    elapsed_days = max((trade_log[-1]["time"] - trade_log[0]["time"]) / 86400.0, 1.0 / 24)
+    total_pnl = sum(r["net_profit_or_loss"] for r in trade_log)
+    daily_rate = total_pnl / elapsed_days
+    return {
+        "daily_rate": daily_rate, "elapsed_days": elapsed_days,
+        "projections": {d: current_balance + daily_rate * d for d in horizons_days},
+    }
+
+
 def next_trade_amount_tiered(db_rows: list[dict], money: dict, tiers: list[dict]) -> dict:
     """
     The exact dollar stake Tab 3's trade engine should use for its NEXT real

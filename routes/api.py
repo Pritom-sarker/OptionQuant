@@ -42,26 +42,6 @@ def tab2_live(request: Request):
     return _render_live(request, "partials/tab2_live.html", vc.build_tab2_context)
 
 
-@router.get("/tab3/live")
-def tab3_live(request: Request):
-    return _render_live(request, "partials/tab3_live.html", vc.build_tab3_context)
-
-
-@router.get("/tab4/live")
-def tab4_live(request: Request):
-    return _render_live(request, "partials/tab4_live.html", vc.build_tab4_context)
-
-
-@router.get("/tab5/live")
-def tab5_live(request: Request):
-    return _render_live(request, "partials/tab5_live.html", vc.build_tab5_context)
-
-
-@router.get("/tab6/live")
-def tab6_live(request: Request):
-    return _render_live(request, "partials/tab6_live.html", vc.build_money_management_context)
-
-
 @router.get("/live_trade/live")
 def live_trade_live(request: Request):
     return _render_live(request, "partials/live_trade_live.html", vc.build_live_trade_context)

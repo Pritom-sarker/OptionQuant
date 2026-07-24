@@ -47,9 +47,9 @@ def live_trade_page(request: Request):
 
 
 @router.get("/analytics")
-def analytics_page(request: Request):
+def analytics_page(request: Request, trade_page: int = 1, money_page: int = 1):
     ctx = {"request": request, "active_tab": "analytics",
-           **vc.build_tab5_context(), **vc.build_money_management_context()}
+           "trade": vc.build_tab5_context(trade_page), "money": vc.build_money_management_context(money_page)}
     return templates.TemplateResponse(request, "analytics.html", ctx)
 
 
