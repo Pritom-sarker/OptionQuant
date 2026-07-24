@@ -19,7 +19,13 @@ router = APIRouter()
 
 @router.get("/")
 def root():
-    return RedirectResponse(url="/tab1")
+    return RedirectResponse(url="/about")
+
+
+@router.get("/about")
+def about_page(request: Request):
+    ctx = {"request": request, "active_tab": "about"}
+    return templates.TemplateResponse(request, "about.html", ctx)
 
 
 @router.get("/tab1")

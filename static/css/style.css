@@ -241,6 +241,10 @@ body::before {
   max-width: 1320px;
   margin: 0 auto;
   padding: 30px 32px 60px;
+  background:
+    radial-gradient(900px 260px at 15% 0%, rgba(79,124,255,0.07), transparent 60%),
+    radial-gradient(700px 220px at 85% 0%, rgba(168,85,247,0.05), transparent 55%);
+  background-repeat: no-repeat;
 }
 
 .page-header {
@@ -258,6 +262,10 @@ h1.page-title {
   font-weight: 800;
   letter-spacing: -0.01em;
   margin: 0 0 5px;
+  background: linear-gradient(90deg, var(--text), var(--accent-1) 140%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .caption {

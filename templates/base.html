@@ -31,6 +31,14 @@
     </div>
 
     <div class="sidebar-scroll">
+      <div class="nav-label">Overview</div>
+      <nav class="nav-group">
+        <a href="/about" class="nav-item{{ ' active' if active_tab == 'about' else '' }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          <span>About</span>
+        </a>
+      </nav>
+
       <div class="nav-label">Engine</div>
       <nav class="nav-group">
         <a href="/tab1" class="nav-item{{ ' active' if active_tab == 'tab1' else '' }}">
